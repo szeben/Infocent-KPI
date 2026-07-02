@@ -21,7 +21,8 @@ import {
   FileText,
   Image,
   Upload,
-  Calendar
+  Calendar,
+  Edit2
 } from 'lucide-react';
 
 // Error Boundary Component to capture runtime UI crashes
@@ -198,6 +199,21 @@ function App() {
   const [c02End, setC02End] = useState('');
   const [c03Start, setC03Start] = useState('');
   const [c03End, setC03End] = useState('');
+
+  // Single Commitment Edit Fields
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingCommitment, setEditingCommitment] = useState(null);
+  const [editReportNum, setEditReportNum] = useState('');
+  const [editPriority, setEditPriority] = useState('1');
+  const [editDeveloper, setEditDeveloper] = useState('');
+  const [editPeriod, setEditPeriod] = useState('Periodo 01');
+  const [editMonth, setEditMonth] = useState('');
+  const [editDeliveryDate, setEditDeliveryDate] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editDeliveryCommitted, setEditDeliveryCommitted] = useState(true);
+  const [editMeasuredForKpi, setEditMeasuredForKpi] = useState(true);
+  const [editFile, setEditFile] = useState(null);
+  const [editFileName, setEditFileName] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -845,6 +861,81 @@ function App() {
     }
   }
 
+  // Edit Commitment Helpers
+  function openEditCommitmentModal(commitment) {
+    setEditingCommitment(commitment);
+    setEditReportNum(commitment.report_number);
+    setEditPriority(String(commitment.priority));
+    setEditDeveloper(commitment.developer_name);
+    setEditPeriod(commitment.period);
+    setEditMonth(commitment.target_month ? commitment.target_month.slice(0, 7) : '');
+    setEditDeliveryDate(commitment.delivery_date || '');
+    setEditNotes(commitment.notes || '');
+    setEditDeliveryCommitted(commitment.delivery_committed !== false);
+    setEditMeasuredForKpi(commitment.measured_for_kpi !== false);
+    setEditFile(null);
+    setEditFileName('');
+    setShowEditModal(true);
+  }
+
+  async function handleEditCommitmentSubmit(e) {
+    e.preventDefault();
+    if (!editReportNum || !editDeveloper || !editPriority || !editPeriod || !editMonth) {
+      alert('Por favor, completa los campos obligatorios.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      let attachmentUrl = editingCommitment.attachment_url;
+
+      if (editFile) {
+        const fileExt = editFile.name.split('.').pop();
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('attachments')
+          .upload(fileName, editFile);
+
+        if (uploadError) {
+          console.warn('Could not upload attachment:', uploadError);
+        } else {
+          const { data: urlData } = supabase.storage
+            .from('attachments')
+            .getPublicUrl(fileName);
+          attachmentUrl = urlData.publicUrl;
+        }
+      }
+
+      const { error } = await supabase
+        .from('dev_commitments')
+        .update({
+          report_number: editReportNum,
+          priority: parseInt(editPriority),
+          developer_name: editDeveloper,
+          period: editPeriod,
+          target_month: `${editMonth}-01`,
+          delivery_date: editDeliveryDate || null,
+          notes: editNotes || null,
+          attachment_url: attachmentUrl,
+          delivery_committed: editDeliveryCommitted,
+          measured_for_kpi: editMeasuredForKpi
+        })
+        .eq('id', editingCommitment.id);
+
+      if (error) throw error;
+
+      setShowEditModal(false);
+      setEditingCommitment(null);
+      await fetchData();
+    } catch (err) {
+      console.error('Error updating commitment:', err);
+      alert('Error al guardar cambios: ' + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   // Bulk Form Row Helpers
   function addDevRow() {
     setDevRows([
@@ -1414,7 +1505,14 @@ function App() {
                                             <span style={{ color: 'var(--text-muted)' }}>-</span>
                                           )}
                                         </td>
-                                        <td style={{ padding: '8px', display: 'flex', gap: '8px' }}>
+                                        <td style={{ padding: '8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                          <button 
+                                            onClick={() => openEditCommitmentModal(c)}
+                                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                            title="Editar compromiso"
+                                          >
+                                            <Edit2 size={13} />
+                                          </button>
                                           <button 
                                             onClick={() => toggleCommitmentDelivery(c.id, c.delivery_date)}
                                             style={{ 
@@ -1940,6 +2038,214 @@ function App() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? 'Guardando...' : 'Guardar Configuración'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Single Commitment Edit Modal */}
+      {showEditModal && editingCommitment && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)', maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '18px' }}>Editar Compromiso: {editReportNum}</h2>
+              <button className="modal-close-btn" onClick={() => { setShowEditModal(false); setEditingCommitment(null); }}>
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleEditCommitmentSubmit}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '480px', overflowY: 'auto', padding: '20px' }}>
+                
+                <div className="form-group">
+                  <label className="form-label">Número de Reporte *</label>
+                  <input 
+                    type="text"
+                    required
+                    className="form-input"
+                    value={editReportNum}
+                    onChange={(e) => setEditReportNum(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-row-2">
+                  <div className="form-group">
+                    <label className="form-label">Prioridad *</label>
+                    <select 
+                      className="form-input"
+                      value={editPriority}
+                      onChange={(e) => setEditPriority(e.target.value)}
+                    >
+                      {[-1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Periodo *</label>
+                    <select 
+                      className="form-input"
+                      value={editPeriod}
+                      onChange={(e) => setEditPeriod(e.target.value)}
+                    >
+                      <option value="Periodo 01">
+                        Periodo 01 ({
+                          (() => {
+                            const dates = getPeriodDates(editMonth, 'Periodo 01');
+                            const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                            const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                            return `${s} al ${e}`;
+                          })()
+                        })
+                      </option>
+                      <option value="Periodo 02">
+                        Periodo 02 ({
+                          (() => {
+                            const dates = getPeriodDates(editMonth, 'Periodo 02');
+                            const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                            const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                            return `${s} al ${e}`;
+                          })()
+                        })
+                      </option>
+                      <option value="Periodo 03">
+                        Periodo 03 ({
+                          (() => {
+                            const dates = getPeriodDates(editMonth, 'Periodo 03');
+                            const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                            const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                            return `${s} al ${e}`;
+                          })()
+                        })
+                      </option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Recurso Asignado *</label>
+                  <select 
+                    className="form-input"
+                    value={editDeveloper}
+                    onChange={(e) => setEditDeveloper(e.target.value)}
+                    required
+                  >
+                    <option value="">-- Seleccionar --</option>
+                    {resources.map(res => (
+                      <option key={res.id} value={res.name}>{res.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-row-2">
+                  <div className="form-group">
+                    <label className="form-label">Mes de la Demanda *</label>
+                    <input 
+                      type="month"
+                      required
+                      className="form-input"
+                      value={editMonth}
+                      onChange={(e) => setEditMonth(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Entrega QA (Opcional)</label>
+                    <input 
+                      type="date"
+                      className="form-input"
+                      value={editDeliveryDate}
+                      onChange={(e) => setEditDeliveryDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row-2">
+                  <div className="form-group">
+                    <label className="form-label">¿Comprometida Entrega? *</label>
+                    <select 
+                      className="form-input"
+                      value={editDeliveryCommitted ? 'true' : 'false'}
+                      onChange={(e) => setEditDeliveryCommitted(e.target.value === 'true')}
+                    >
+                      <option value="true">Sí</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">¿Se mide en el KPI? *</label>
+                    <select 
+                      className="form-input"
+                      value={editMeasuredForKpi ? 'true' : 'false'}
+                      onChange={(e) => setEditMeasuredForKpi(e.target.value === 'true')}
+                    >
+                      <option value="true">Sí</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Adjuntar Imagen (Reemplaza la anterior)</label>
+                  <div>
+                    <input 
+                      type="file"
+                      accept="image/*"
+                      id="edit-file-upload-single"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          setEditFile(file);
+                          setEditFileName(file.name);
+                        }
+                      }}
+                    />
+                    <label 
+                      htmlFor="edit-file-upload-single" 
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '8px', 
+                        border: '1px dashed rgba(255,255,255,0.15)', 
+                        padding: '8px 12px', 
+                        borderRadius: '8px', 
+                        cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.01)',
+                        fontSize: '12px'
+                      }}
+                    >
+                      <Upload size={14} />
+                      {editFileName ? editFileName : 'Cambiar imagen...'}
+                    </label>
+                  </div>
+                  {editingCommitment.attachment_url && !editFileName && (
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      Tiene una imagen activa: <a href={editingCommitment.attachment_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-dev)', textDecoration: 'underline' }}>Ver actual</a>
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Observaciones</label>
+                  <input 
+                    type="text"
+                    className="form-input"
+                    placeholder="Notas o comentarios..."
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => { setShowEditModal(false); setEditingCommitment(null); }} disabled={submitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Guardando...' : 'Guardar Cambios'}
                 </button>
               </div>
             </form>
