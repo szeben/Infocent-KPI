@@ -191,6 +191,7 @@ function App() {
   const [devMonth, setDevMonth] = useState(new Date().toISOString().slice(0, 7));
 
   // Date Configuration Fields
+  const [configMonth, setConfigMonth] = useState(new Date().toISOString().slice(0, 7));
   const [c01Start, setC01Start] = useState('');
   const [c01End, setC01End] = useState('');
   const [c02Start, setC02Start] = useState('');
@@ -797,10 +798,10 @@ function App() {
   }
 
   // Period Configurations Modal Helpers
-  function openPeriodConfigModal() {
-    const dates01 = getPeriodDates(selectedMonth, 'Periodo 01');
-    const dates02 = getPeriodDates(selectedMonth, 'Periodo 02');
-    const dates03 = getPeriodDates(selectedMonth, 'Periodo 03');
+  function loadConfigDatesForMonth(month) {
+    const dates01 = getPeriodDates(month, 'Periodo 01');
+    const dates02 = getPeriodDates(month, 'Periodo 02');
+    const dates03 = getPeriodDates(month, 'Periodo 03');
 
     setC01Start(dates01.start);
     setC01End(dates01.end);
@@ -808,7 +809,11 @@ function App() {
     setC02End(dates02.end);
     setC03Start(dates03.start);
     setC03End(dates03.end);
+  }
 
+  function openPeriodConfigModal() {
+    setConfigMonth(selectedMonth);
+    loadConfigDatesForMonth(selectedMonth);
     setShowConfigModal(true);
   }
 
@@ -817,9 +822,9 @@ function App() {
     setSubmitting(true);
     try {
       const payloads = [
-        { target_month: `${selectedMonth}-01`, period: 'Periodo 01', start_date: c01Start, end_date: c01End },
-        { target_month: `${selectedMonth}-01`, period: 'Periodo 02', start_date: c02Start, end_date: c02End },
-        { target_month: `${selectedMonth}-01`, period: 'Periodo 03', start_date: c03Start, end_date: c03End }
+        { target_month: `${configMonth}-01`, period: 'Periodo 01', start_date: c01Start, end_date: c01End },
+        { target_month: `${configMonth}-01`, period: 'Periodo 02', start_date: c02Start, end_date: c02End },
+        { target_month: `${configMonth}-01`, period: 'Periodo 03', start_date: c03Start, end_date: c03End }
       ];
 
       const { error } = await supabase
@@ -1807,15 +1812,33 @@ function App() {
         <div className="modal-overlay">
           <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)', maxWidth: '500px' }}>
             <div className="modal-header">
-              <h2 style={{ fontSize: '18px' }}>Configurar Periodos - {selectedMonth}</h2>
+              <h2 style={{ fontSize: '18px' }}>Configurar Periodos</h2>
               <button className="modal-close-btn" onClick={() => setShowConfigModal(false)}>
                 <X size={18} />
               </button>
             </div>
             <form onSubmit={handlePeriodConfigSubmit}>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                
+                {/* Month Selector in Modal */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', gap: '10px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 'bold' }}>Mes a Configurar:</span>
+                  <input 
+                    type="month"
+                    required
+                    className="form-input"
+                    style={{ padding: '6px 12px', width: '160px', background: 'rgba(0,0,0,0.2)' }}
+                    value={configMonth}
+                    onChange={(e) => {
+                      const newMonth = e.target.value;
+                      setConfigMonth(newMonth);
+                      loadConfigDatesForMonth(newMonth);
+                    }}
+                  />
+                </div>
+
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  Ajusta las fechas de inicio y fin para cada uno de los tres períodos de este mes.
+                  Ajusta las fechas de inicio y fin para cada uno de los tres períodos del mes seleccionado.
                 </p>
 
                 {/* Period 01 */}
