@@ -299,7 +299,7 @@ function App() {
       return periods.map(p => {
         const pCommitments = commitments.filter(c => {
           const cMonth = c.target_month ? c.target_month.slice(0, 7) : ''; // 'YYYY-MM'
-          return cMonth === selectedMonth && c.period === p;
+          return cMonth === selectedMonth && c.period === p && c.measured_for_kpi !== false;
         });
         const total = pCommitments.length;
         const delivered = pCommitments.filter(c => c.delivery_date !== null).length;
@@ -327,7 +327,7 @@ function App() {
     const kpi = kpis.find(k => k.id === kpiId);
     if (kpi && kpi.name === 'Efectiva Desarrollo') {
       // For Efectiva Desarrollo, the overall month average is the latest value
-      const monthCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === selectedMonth);
+      const monthCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === selectedMonth && c.measured_for_kpi !== false);
       if (monthCommitments.length === 0) return null;
       const total = monthCommitments.length;
       const delivered = monthCommitments.filter(c => c.delivery_date !== null).length;
@@ -345,7 +345,7 @@ function App() {
       const prevDate = new Date(current.getFullYear(), current.getMonth() - 1, 1);
       const prevMonthStr = prevDate.toISOString().slice(0, 7);
       
-      const prevCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === prevMonthStr);
+      const prevCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === prevMonthStr && c.measured_for_kpi !== false);
       if (prevCommitments.length === 0) return null;
       const total = prevCommitments.length;
       const delivered = prevCommitments.filter(c => c.delivery_date !== null).length;
@@ -776,7 +776,9 @@ function App() {
           target_month: `${devMonth}-01`,
           delivery_date: row.deliveryDate || null,
           notes: row.notes || null,
-          attachment_url: attachmentUrl
+          attachment_url: attachmentUrl,
+          delivery_committed: row.deliveryCommitted,
+          measured_for_kpi: row.measuredForKpi
         });
       }
 
@@ -856,7 +858,9 @@ function App() {
         deliveryDate: '',
         notes: '',
         file: null,
-        fileName: ''
+        fileName: '',
+        deliveryCommitted: true,
+        measuredForKpi: true
       }
     ]);
   }
@@ -921,7 +925,9 @@ function App() {
           deliveryDate: '',
           notes: '',
           file: null,
-          fileName: ''
+          fileName: '',
+          deliveryCommitted: true,
+          measuredForKpi: true
         }
       ]);
     } else {
@@ -1351,6 +1357,8 @@ function App() {
                                     <th style={{ padding: '8px' }}>Prioridad</th>
                                     <th style={{ padding: '8px' }}>Desarrollador</th>
                                     <th style={{ padding: '8px' }}>Periodo</th>
+                                    <th style={{ padding: '8px' }}>Comprometida</th>
+                                    <th style={{ padding: '8px' }}>Se Mide</th>
                                     <th style={{ padding: '8px' }}>Entrega QA</th>
                                     <th style={{ padding: '8px' }}>Adjunto</th>
                                     <th style={{ padding: '8px' }}>Acciones</th>
@@ -1369,6 +1377,20 @@ function App() {
                                         </td>
                                         <td style={{ padding: '8px' }}>{c.developer_name}</td>
                                         <td style={{ padding: '8px' }}>{c.period}</td>
+                                        <td style={{ padding: '8px' }}>
+                                          {c.delivery_committed !== false ? (
+                                            <span style={{ color: '#34d399', fontWeight: '600' }}>Sí</span>
+                                          ) : (
+                                            <span style={{ color: 'var(--text-muted)' }}>No</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '8px' }}>
+                                          {c.measured_for_kpi !== false ? (
+                                            <span style={{ color: '#34d399', fontWeight: '600' }}>Sí</span>
+                                          ) : (
+                                            <span style={{ color: '#ef4444', fontWeight: '600' }}>No</span>
+                                          )}
+                                        </td>
                                         <td style={{ padding: '8px' }}>
                                           {isDelivered ? (
                                             <span style={{ color: '#34d399', fontWeight: '600' }} title={`Entregado el ${c.delivery_date}`}>
@@ -1695,6 +1717,32 @@ function App() {
                               {row.fileName ? row.fileName : 'Seleccionar imagen (.png, .jpg)'}
                             </label>
                           </div>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>¿Comprometida Entrega? *</label>
+                          <select 
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            value={row.deliveryCommitted ? 'true' : 'false'}
+                            onChange={(e) => updateDevRow(row.id, 'deliveryCommitted', e.target.value === 'true')}
+                          >
+                            <option value="true">Sí</option>
+                            <option value="false">No</option>
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>¿Se mide en el KPI? *</label>
+                          <select 
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            value={row.measuredForKpi ? 'true' : 'false'}
+                            onChange={(e) => updateDevRow(row.id, 'measuredForKpi', e.target.value === 'true')}
+                          >
+                            <option value="true">Sí</option>
+                            <option value="false">No</option>
+                          </select>
                         </div>
 
                         <div className="form-group" style={{ gridColumn: 'span 2' }}>
