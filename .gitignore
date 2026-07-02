@@ -1,14 +1,3 @@
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Dependency directories
-node_modules/
-jspm_packages/
-
 # Logs
 logs
 *.log
@@ -18,13 +7,24 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# OS metadata
-.DS_Store
-Thumbs.db
+# Dependencies
+node_modules/
+dist/
+dist-ssr/
 
-# IDEs and editors
-.idea/
-.vscode/
+# Local env files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
