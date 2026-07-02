@@ -167,6 +167,7 @@ function App() {
   const [commitments, setCommitments] = useState([]);
   const [resources, setResources] = useState([]);
   const [devRows, setDevRows] = useState([]);
+  const [periodConfigs, setPeriodConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   
@@ -178,6 +179,7 @@ function App() {
   // Form Modal (General / Commitments)
   const [showModal, setShowModal] = useState(false);
   const [modalKpi, setModalKpi] = useState(null);
+  const [showConfigModal, setShowConfigModal] = useState(false);
   
   // Form Fields - Regular KPI
   const [formValue, setFormValue] = useState('');
@@ -187,6 +189,14 @@ function App() {
   
   // Form Fields - Dev Commitment (Efectiva Desarrollo) Month
   const [devMonth, setDevMonth] = useState(new Date().toISOString().slice(0, 7));
+
+  // Date Configuration Fields
+  const [c01Start, setC01Start] = useState('');
+  const [c01End, setC01End] = useState('');
+  const [c02Start, setC02Start] = useState('');
+  const [c02End, setC02End] = useState('');
+  const [c03Start, setC03Start] = useState('');
+  const [c03End, setC03End] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -239,6 +249,13 @@ function App() {
       if (resourcesErr) throw resourcesErr;
       setResources(resourcesData || []);
 
+      // 6. Fetch Period Configurations
+      const { data: configsData, error: configsErr } = await supabase
+        .from('period_configurations')
+        .select('*');
+      if (configsErr) throw configsErr;
+      setPeriodConfigs(configsData || []);
+
       // Automatically select the first KPI if available
       if (kpisData && kpisData.length > 0 && !selectedKpiId) {
         setSelectedKpiId(kpisData[0].id);
@@ -252,6 +269,26 @@ function App() {
   }
 
   // Helpers
+  function getPeriodDates(monthStr, periodName) {
+    const config = periodConfigs.find(c => c.target_month && c.target_month.slice(0, 7) === monthStr && c.period === periodName);
+    if (config) {
+      return { start: config.start_date, end: config.end_date };
+    }
+    
+    // Generate default dates
+    const year = parseInt(monthStr.slice(0, 4));
+    const month = parseInt(monthStr.slice(5, 7));
+    const lastDay = new Date(year, month, 0).getDate();
+    
+    if (periodName === 'Periodo 01') {
+      return { start: `${monthStr}-01`, end: `${monthStr}-10` };
+    } else if (periodName === 'Periodo 02') {
+      return { start: `${monthStr}-11`, end: `${monthStr}-20` };
+    } else {
+      return { start: `${monthStr}-21`, end: `${monthStr}-${String(lastDay).padStart(2, '0')}` };
+    }
+  }
+
   function getKpiEntries(kpiId) {
     const kpi = kpis.find(k => k.id === kpiId);
     
@@ -267,12 +304,13 @@ function App() {
         const delivered = pCommitments.filter(c => c.delivery_date !== null).length;
         // Default to 100% fulfillment if no report commits exist for the period
         const val = total > 0 ? Math.round((delivered / total) * 100) : 100;
+        const dates = getPeriodDates(selectedMonth, p);
         
         return {
           id: p,
           kpi_id: kpiId,
           value: val,
-          period_end: p === 'Periodo 01' ? `${selectedMonth}-10` : p === 'Periodo 02' ? `${selectedMonth}-20` : `${selectedMonth}-28`,
+          period_end: dates.end,
           notes: `${delivered} de ${total} entregados`
         };
       });
@@ -758,6 +796,48 @@ function App() {
     }
   }
 
+  // Period Configurations Modal Helpers
+  function openPeriodConfigModal() {
+    const dates01 = getPeriodDates(selectedMonth, 'Periodo 01');
+    const dates02 = getPeriodDates(selectedMonth, 'Periodo 02');
+    const dates03 = getPeriodDates(selectedMonth, 'Periodo 03');
+
+    setC01Start(dates01.start);
+    setC01End(dates01.end);
+    setC02Start(dates02.start);
+    setC02End(dates02.end);
+    setC03Start(dates03.start);
+    setC03End(dates03.end);
+
+    setShowConfigModal(true);
+  }
+
+  async function handlePeriodConfigSubmit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const payloads = [
+        { target_month: `${selectedMonth}-01`, period: 'Periodo 01', start_date: c01Start, end_date: c01End },
+        { target_month: `${selectedMonth}-01`, period: 'Periodo 02', start_date: c02Start, end_date: c02End },
+        { target_month: `${selectedMonth}-01`, period: 'Periodo 03', start_date: c03Start, end_date: c03End }
+      ];
+
+      const { error } = await supabase
+        .from('period_configurations')
+        .upsert(payloads, { onConflict: 'target_month,period' });
+
+      if (error) throw error;
+
+      setShowConfigModal(false);
+      await fetchData();
+    } catch (err) {
+      console.error('Error saving period configurations:', err);
+      alert('Error al guardar configuración: ' + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   // Bulk Form Row Helpers
   function addDevRow() {
     setDevRows([
@@ -1216,12 +1296,23 @@ function App() {
                           <h2>{selectedKpi.name}</h2>
                           <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{selectedKpi.description}</p>
                         </div>
-                        <button 
-                          className="btn btn-primary"
-                          onClick={() => openAddModal(selectedKpi)}
-                        >
-                          <Plus size={16} /> Registrar
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          {selectedKpi.name === 'Efectiva Desarrollo' && (
+                            <button 
+                              className="btn btn-secondary"
+                              onClick={openPeriodConfigModal}
+                              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', background: 'rgba(255,255,255,0.05)', color: '#f3f4f6', border: '1px solid rgba(255,255,255,0.1)' }}
+                            >
+                              ⚙️ Configurar Períodos
+                            </button>
+                          )}
+                          <button 
+                            className="btn btn-primary"
+                            onClick={() => openAddModal(selectedKpi)}
+                          >
+                            <Plus size={16} /> Registrar
+                          </button>
+                        </div>
                       </div>
 
                       {/* SVG Chart */}
@@ -1518,9 +1609,36 @@ function App() {
                             value={row.period}
                             onChange={(e) => updateDevRow(row.id, 'period', e.target.value)}
                           >
-                            <option value="Periodo 01">Periodo 01 (Día 1-10)</option>
-                            <option value="Periodo 02">Periodo 02 (Día 11-20)</option>
-                            <option value="Periodo 03">Periodo 03 (Día 21-Fin)</option>
+                            <option value="Periodo 01">
+                              Periodo 01 ({
+                                (() => {
+                                  const dates = getPeriodDates(devMonth, 'Periodo 01');
+                                  const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                                  const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                                  return `${s} al ${e}`;
+                                })()
+                              })
+                            </option>
+                            <option value="Periodo 02">
+                              Periodo 02 ({
+                                (() => {
+                                  const dates = getPeriodDates(devMonth, 'Periodo 02');
+                                  const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                                  const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                                  return `${s} al ${e}`;
+                                })()
+                              })
+                            </option>
+                            <option value="Periodo 03">
+                              Periodo 03 ({
+                                (() => {
+                                  const dates = getPeriodDates(devMonth, 'Periodo 03');
+                                  const s = dates.start.split('-').reverse().slice(0, 2).join('/');
+                                  const e = dates.end.split('-').reverse().slice(0, 2).join('/');
+                                  return `${s} al ${e}`;
+                                })()
+                              })
+                            </option>
                           </select>
                         </div>
 
@@ -1680,6 +1798,80 @@ function App() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Period Configuration Modal */}
+      {showConfigModal && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)', maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '18px' }}>Configurar Periodos - {selectedMonth}</h2>
+              <button className="modal-close-btn" onClick={() => setShowConfigModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handlePeriodConfigSubmit}>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Ajusta las fechas de inicio y fin para cada uno de los tres períodos de este mes.
+                </p>
+
+                {/* Period 01 */}
+                <div style={{ padding: '12px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', background: 'rgba(255,255,255,0.01)' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '12px', color: 'var(--color-dev)', marginBottom: '8px' }}>Periodo 01</div>
+                  <div className="form-row-2">
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Inicio</label>
+                      <input type="date" required className="form-input" value={c01Start} onChange={(e) => setC01Start(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Fin</label>
+                      <input type="date" required className="form-input" value={c01End} onChange={(e) => setC01End(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Period 02 */}
+                <div style={{ padding: '12px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', background: 'rgba(255,255,255,0.01)' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '12px', color: 'var(--color-dev)', marginBottom: '8px' }}>Periodo 02</div>
+                  <div className="form-row-2">
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Inicio</label>
+                      <input type="date" required className="form-input" value={c02Start} onChange={(e) => setC02Start(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Fin</label>
+                      <input type="date" required className="form-input" value={c02End} onChange={(e) => setC02End(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Period 03 */}
+                <div style={{ padding: '12px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', background: 'rgba(255,255,255,0.01)' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '12px', color: 'var(--color-dev)', marginBottom: '8px' }}>Periodo 03</div>
+                  <div className="form-row-2">
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Inicio</label>
+                      <input type="date" required className="form-input" value={c03Start} onChange={(e) => setC03Start(e.target.value)} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '10px' }}>Fin</label>
+                      <input type="date" required className="form-input" value={c03End} onChange={(e) => setC03End(e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowConfigModal(false)} disabled={submitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Guardando...' : 'Guardar Configuración'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
