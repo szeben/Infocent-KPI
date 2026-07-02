@@ -165,6 +165,8 @@ function App() {
   const [kpis, setKpis] = useState([]);
   const [entries, setEntries] = useState([]);
   const [commitments, setCommitments] = useState([]);
+  const [resources, setResources] = useState([]);
+  const [devRows, setDevRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   
@@ -183,15 +185,8 @@ function App() {
   const [formPeriodEnd, setFormPeriodEnd] = useState('');
   const [formNotes, setFormNotes] = useState('');
   
-  // Form Fields - Dev Commitment (Efectiva Desarrollo)
-  const [devReportNum, setDevReportNum] = useState('');
-  const [devPriority, setDevPriority] = useState('');
-  const [devDeveloper, setDevDeveloper] = useState('');
-  const [devPeriod, setDevPeriod] = useState('Periodo 01');
+  // Form Fields - Dev Commitment (Efectiva Desarrollo) Month
   const [devMonth, setDevMonth] = useState(new Date().toISOString().slice(0, 7));
-  const [devDeliveryDate, setDevDeliveryDate] = useState('');
-  const [devNotes, setDevNotes] = useState('');
-  const [devFile, setDevFile] = useState(null);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -235,6 +230,14 @@ function App() {
         .order('created_at', { ascending: true });
       if (commitmentsErr) throw commitmentsErr;
       setCommitments(commitmentsData || []);
+
+      // 5. Fetch Resources (Developer list)
+      const { data: resourcesData, error: resourcesErr } = await supabase
+        .from('resources')
+        .select('*')
+        .order('name');
+      if (resourcesErr) throw resourcesErr;
+      setResources(resourcesData || []);
 
       // Automatically select the first KPI if available
       if (kpisData && kpisData.length > 0 && !selectedKpiId) {
@@ -688,69 +691,101 @@ function App() {
     }
   }
 
-  // Dev Commitment Submit handler
+  // Dev Commitment Submit handler (Bulk Save)
   async function handleDevCommitmentSubmit(e) {
     e.preventDefault();
-    if (!devReportNum || !devPriority || !devDeveloper || !devPeriod || !devMonth) {
-      alert('Por favor, completa los campos requeridos (*).');
+    if (devRows.length === 0) {
+      alert('Por favor, añade al menos un registro.');
       return;
     }
 
     setSubmitting(true);
     try {
-      let attachmentUrl = null;
+      const insertPayloads = [];
 
-      // Upload file if selected
-      if (devFile) {
-        const fileExt = devFile.name.split('.').pop();
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('attachments')
-          .upload(fileName, devFile);
-
-        if (uploadError) {
-          console.warn('Could not upload attachment (ignoring and proceeding):', uploadError);
-        } else {
-          const { data: urlData } = supabase.storage
-            .from('attachments')
-            .getPublicUrl(fileName);
-          attachmentUrl = urlData.publicUrl;
+      for (const row of devRows) {
+        if (!row.reportNumber || !row.developerName || !row.priority || !row.period) {
+          throw new Error('Por favor, completa los campos requeridos (*) de todos los reportes.');
         }
+
+        let attachmentUrl = null;
+
+        // Upload file if selected for this row
+        if (row.file) {
+          const fileExt = row.file.name.split('.').pop();
+          const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+          
+          const { error: uploadError } = await supabase.storage
+            .from('attachments')
+            .upload(fileName, row.file);
+
+          if (uploadError) {
+            console.warn('Could not upload attachment:', uploadError);
+          } else {
+            const { data: urlData } = supabase.storage
+              .from('attachments')
+              .getPublicUrl(fileName);
+            attachmentUrl = urlData.publicUrl;
+          }
+        }
+
+        insertPayloads.push({
+          report_number: row.reportNumber,
+          priority: parseInt(row.priority),
+          developer_name: row.developerName,
+          period: row.period,
+          target_month: `${devMonth}-01`,
+          delivery_date: row.deliveryDate || null,
+          notes: row.notes || null,
+          attachment_url: attachmentUrl
+        });
       }
 
       const { error } = await supabase
         .from('dev_commitments')
-        .insert([
-          {
-            report_number: devReportNum,
-            priority: parseInt(devPriority),
-            developer_name: devDeveloper,
-            period: devPeriod,
-            target_month: `${devMonth}-01`,
-            delivery_date: devDeliveryDate || null,
-            notes: devNotes || null,
-            attachment_url: attachmentUrl
-          }
-        ]);
+        .insert(insertPayloads);
 
       if (error) throw error;
 
       setShowModal(false);
-      setDevReportNum('');
-      setDevPriority('');
-      setDevDeveloper('');
-      setDevPeriod('Periodo 01');
-      setDevDeliveryDate('');
-      setDevNotes('');
-      setDevFile(null);
+      setDevRows([]);
       await fetchData();
     } catch (err) {
-      console.error('Error saving commitment:', err);
-      alert('Error al guardar compromiso: ' + err.message);
+      console.error('Error saving commitments:', err);
+      alert('Error al guardar compromisos: ' + err.message);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Bulk Form Row Helpers
+  function addDevRow() {
+    setDevRows([
+      ...devRows,
+      {
+        id: Math.random().toString(36).substring(2, 7),
+        reportNumber: '',
+        priority: '1',
+        developerName: resources.length > 0 ? resources[0].name : '',
+        period: 'Periodo 01',
+        deliveryDate: '',
+        notes: '',
+        file: null,
+        fileName: ''
+      }
+    ]);
+  }
+
+  function removeDevRow(id) {
+    if (devRows.length === 1) {
+      alert('Debes mantener al menos un registro en la lista.');
+      return;
+    }
+    setDevRows(devRows.filter(row => row.id !== id));
+  }
+
+  function updateDevRow(id, field, value) {
+    setDevRows(devRows.map(row => row.id === id ? { ...row, [field]: value } : row));
   }
 
   // Commitment Toggles & Deletes
@@ -791,13 +826,19 @@ function App() {
     setModalKpi(kpi);
     if (kpi.name === 'Efectiva Desarrollo') {
       setDevMonth(selectedMonth);
-      setDevReportNum('');
-      setDevPriority('');
-      setDevDeveloper('');
-      setDevPeriod('Periodo 01');
-      setDevDeliveryDate('');
-      setDevNotes('');
-      setDevFile(null);
+      setDevRows([
+        {
+          id: Math.random().toString(36).substring(2, 7),
+          reportNumber: '',
+          priority: '1',
+          developerName: resources.length > 0 ? resources[0].name : '',
+          period: 'Periodo 01',
+          deliveryDate: '',
+          notes: '',
+          file: null,
+          fileName: ''
+        }
+      ]);
     } else {
       const today = new Date();
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -1352,7 +1393,14 @@ function App() {
       {/* Modal Form */}
       {showModal && modalKpi && (
         <div className="modal-overlay">
-          <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)', maxWidth: modalKpi.name === 'Efectiva Desarrollo' ? '540px' : '480px' }}>
+          <div 
+            className="glass-panel modal-content" 
+            style={{ 
+              background: 'var(--bg-secondary)', 
+              maxWidth: modalKpi.name === 'Efectiva Desarrollo' ? '900px' : '480px',
+              width: '90%'
+            }}
+          >
             <div className="modal-header">
               <h2 style={{ fontSize: '18px' }}>Registrar: {modalKpi.name}</h2>
               <button className="modal-close-btn" onClick={() => setShowModal(false)}>
@@ -1361,133 +1409,188 @@ function App() {
             </div>
             
             {modalKpi.name === 'Efectiva Desarrollo' ? (
-              /* Custom Form for Efectiva Desarrollo Commitment */
+              /* Custom Form for Efectiva Desarrollo Commitment (Bulk Save) */
               <form onSubmit={handleDevCommitmentSubmit}>
-                <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">Número de Reporte *</label>
-                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', padding: '2px 10px' }}>
-                      <FileText size={16} style={{ color: 'var(--text-muted)', marginRight: '8px' }} />
-                      <input 
-                        type="text"
-                        required
-                        className="form-input"
-                        style={{ border: 'none', background: 'transparent', padding: '8px 0', flexGrow: 1 }}
-                        placeholder="Ej: REP-4859"
-                        value={devReportNum}
-                        onChange={(e) => setDevReportNum(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Prioridad (Numérica) *</label>
-                    <input 
-                      type="number"
-                      required
-                      min="1"
-                      className="form-input"
-                      placeholder="Ej: 1, 2, 3..."
-                      value={devPriority}
-                      onChange={(e) => setDevPriority(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Recurso Asignado *</label>
-                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', padding: '2px 10px' }}>
-                      <User size={16} style={{ color: 'var(--text-muted)', marginRight: '8px' }} />
-                      <input 
-                        type="text"
-                        required
-                        className="form-input"
-                        style={{ border: 'none', background: 'transparent', padding: '8px 0', flexGrow: 1 }}
-                        placeholder="Nombre de Desarrollador"
-                        value={devDeveloper}
-                        onChange={(e) => setDevDeveloper(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Periodo *</label>
-                    <select 
-                      className="form-input"
-                      value={devPeriod}
-                      onChange={(e) => setDevPeriod(e.target.value)}
-                    >
-                      <option value="Periodo 01">Periodo 01 (Día 1-10)</option>
-                      <option value="Periodo 02">Periodo 02 (Día 11-20)</option>
-                      <option value="Periodo 03">Periodo 03 (Día 21-Fin)</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Mes de la Demanda *</label>
+                
+                {/* Global Month Selector */}
+                <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <Calendar size={18} style={{ color: 'var(--color-primary)' }} />
+                    <span style={{ fontSize: '13px', fontWeight: 'bold' }}>Mes de la Demanda (Aplica para todos):</span>
                     <input 
                       type="month"
                       required
                       className="form-input"
+                      style={{ padding: '6px 12px', width: '160px', background: 'rgba(0,0,0,0.2)' }}
                       value={devMonth}
                       onChange={(e) => setDevMonth(e.target.value)}
                     />
                   </div>
-
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">Fecha de Entrega a QA (Opcional)</label>
-                    <input 
-                      type="date"
-                      className="form-input"
-                      value={devDeliveryDate}
-                      onChange={(e) => setDevDeliveryDate(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">Adjuntar Imagen de Respaldo</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <input 
-                        type="file"
-                        accept="image/*"
-                        id="dev-file-upload"
-                        style={{ display: 'none' }}
-                        onChange={(e) => setDevFile(e.target.files[0])}
-                      />
-                      <label 
-                        htmlFor="dev-file-upload" 
-                        style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center', 
-                          gap: '10px', 
-                          border: '1px dashed rgba(255,255,255,0.15)', 
-                          padding: '16px', 
-                          borderRadius: '8px', 
-                          cursor: 'pointer',
-                          background: 'rgba(255,255,255,0.01)'
-                        }}
-                      >
-                        <Upload size={16} />
-                        {devFile ? devFile.name : 'Seleccionar captura/imagen (.png, .jpg)'}
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">Observaciones</label>
-                    <textarea 
-                      className="form-input"
-                      rows="2"
-                      placeholder="Comentarios sobre este reporte..."
-                      style={{ resize: 'none' }}
-                      value={devNotes}
-                      onChange={(e) => setDevNotes(e.target.value)}
-                    />
-                  </div>
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary btn-sm"
+                    onClick={addDevRow}
+                    style={{ background: 'rgba(45, 212, 191, 0.15)', color: '#2dd4bf', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}
+                  >
+                    <Plus size={14} /> + Añadir Otro Reporte
+                  </button>
                 </div>
 
-                <div className="modal-footer">
+                <div className="modal-body" style={{ maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px' }}>
+                  {devRows.map((row, index) => (
+                    <div 
+                      key={row.id} 
+                      className="glass-panel" 
+                      style={{ 
+                        padding: '16px', 
+                        background: 'rgba(255,255,255,0.01)', 
+                        border: '1px solid rgba(255,255,255,0.05)', 
+                        borderRadius: '10px',
+                        position: 'relative'
+                      }}
+                    >
+                      {/* Row Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-dev)', textTransform: 'uppercase' }}>
+                          Reporte #{index + 1}
+                        </span>
+                        {devRows.length > 1 && (
+                          <button 
+                            type="button"
+                            onClick={() => removeDevRow(row.id)}
+                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', fontWeight: '600' }}
+                          >
+                            <Trash2 size={12} /> Quitar
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Inputs Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Número de Reporte *</label>
+                          <input 
+                            type="text"
+                            required
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            placeholder="Ej: REP-4859"
+                            value={row.reportNumber}
+                            onChange={(e) => updateDevRow(row.id, 'reportNumber', e.target.value)}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Prioridad *</label>
+                          <select 
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            value={row.priority}
+                            onChange={(e) => updateDevRow(row.id, 'priority', e.target.value)}
+                          >
+                            {[-1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(p => (
+                              <option key={p} value={p}>{p}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Recurso Asignado *</label>
+                          <select 
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            value={row.developerName}
+                            onChange={(e) => updateDevRow(row.id, 'developerName', e.target.value)}
+                            required
+                          >
+                            <option value="">-- Seleccionar --</option>
+                            {resources.map(res => (
+                              <option key={res.id} value={res.name}>{res.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Periodo *</label>
+                          <select 
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            value={row.period}
+                            onChange={(e) => updateDevRow(row.id, 'period', e.target.value)}
+                          >
+                            <option value="Periodo 01">Periodo 01 (Día 1-10)</option>
+                            <option value="Periodo 02">Periodo 02 (Día 11-20)</option>
+                            <option value="Periodo 03">Periodo 03 (Día 21-Fin)</option>
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Entrega QA (Opcional)</label>
+                          <input 
+                            type="date"
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '5px 10px' }}
+                            value={row.deliveryDate}
+                            onChange={(e) => updateDevRow(row.id, 'deliveryDate', e.target.value)}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '11px' }}>Adjuntar Imagen</label>
+                          <div>
+                            <input 
+                              type="file"
+                              accept="image/*"
+                              id={`file-upload-${row.id}`}
+                              style={{ display: 'none' }}
+                              onChange={(e) => {
+                                const file = e.target.files[0];
+                                if (file) {
+                                  updateDevRow(row.id, 'file', file);
+                                  updateDevRow(row.id, 'fileName', file.name);
+                                }
+                              }}
+                            />
+                            <label 
+                              htmlFor={`file-upload-${row.id}`} 
+                              style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                border: '1px dashed rgba(255,255,255,0.15)', 
+                                padding: '6px 10px', 
+                                borderRadius: '8px', 
+                                cursor: 'pointer',
+                                background: 'rgba(255,255,255,0.01)',
+                                fontSize: '11px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              <Upload size={12} />
+                              {row.fileName ? row.fileName : 'Seleccionar imagen (.png, .jpg)'}
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                          <label className="form-label" style={{ fontSize: '11px' }}>Observaciones</label>
+                          <input 
+                            type="text"
+                            className="form-input"
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            placeholder="Comentarios o notas de este reporte..."
+                            value={row.notes}
+                            onChange={(e) => updateDevRow(row.id, 'notes', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="modal-footer" style={{ borderTop: '1px solid rgba(255,255,255,0.05)', padding: '16px' }}>
                   <button 
                     type="button" 
                     className="btn btn-secondary" 
@@ -1501,7 +1604,7 @@ function App() {
                     className="btn btn-primary"
                     disabled={submitting}
                   >
-                    {submitting ? 'Guardando...' : 'Asignar Reporte'}
+                    {submitting ? 'Guardando...' : `Guardar Todos (${devRows.length})`}
                   </button>
                 </div>
               </form>
