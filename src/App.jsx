@@ -24,6 +24,94 @@ import {
   Calendar
 } from 'lucide-react';
 
+// Error Boundary Component to capture runtime UI crashes
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ 
+          padding: '24px', 
+          background: '#1e1b4b', 
+          color: '#f43f5e', 
+          border: '2px solid #e11d48', 
+          fontFamily: 'monospace', 
+          margin: '40px auto', 
+          maxWidth: '800px',
+          borderRadius: '12px', 
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+          zIndex: 9999, 
+          position: 'relative' 
+        }}>
+          <h2 style={{ fontSize: '20px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertCircle /> 🚨 Error en la Interfaz (Render Error)
+          </h2>
+          <p style={{ color: '#9ca3af', marginBottom: '16px', fontSize: '13px' }}>
+            Se produjo un error crítico en el renderizado de React. A continuación se detalla el error:
+          </p>
+          <pre style={{ 
+            whiteSpace: 'pre-wrap', 
+            background: '#0f172a', 
+            padding: '16px', 
+            borderRadius: '8px', 
+            color: '#fda4af', 
+            fontSize: '12px',
+            border: '1px solid rgba(255,255,255,0.05)',
+            maxHeight: '400px',
+            overflowY: 'auto'
+          }}>
+            {this.state.error?.stack || this.state.error?.message || String(this.state.error)}
+          </pre>
+          <div style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
+            <button 
+              onClick={() => this.setState({ hasError: false, error: null })} 
+              style={{ 
+                padding: '10px 20px', 
+                background: '#e11d48', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '6px', 
+                cursor: 'pointer', 
+                fontWeight: 'bold',
+                boxShadow: '0 4px 12px rgba(225, 29, 72, 0.3)'
+              }}
+            >
+              Reintentar Renderizado
+            </button>
+            <button 
+              onClick={() => window.location.reload()} 
+              style={{ 
+                padding: '10px 20px', 
+                background: 'rgba(255,255,255,0.05)', 
+                color: 'white', 
+                border: '1px solid rgba(255,255,255,0.1)', 
+                borderRadius: '6px', 
+                cursor: 'pointer' 
+              }}
+            >
+              Recargar Página
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 // Sub-component: Circular Progress Ring
 function CircularProgress({ percent, size = 60, strokeWidth = 5, color = '#6366f1' }) {
   const radius = (size - strokeWidth) / 2;
@@ -71,7 +159,7 @@ function CircularProgress({ percent, size = 60, strokeWidth = 5, color = '#6366f
   );
 }
 
-export default function App() {
+function App() {
   // State variables
   const [units, setUnits] = useState([]);
   const [kpis, setKpis] = useState([]);
@@ -146,7 +234,7 @@ export default function App() {
         .select('*')
         .order('created_at', { ascending: true });
       if (commitmentsErr) throw commitmentsErr;
-      setCommitments(commitmentsData);
+      setCommitments(commitmentsData || []);
 
       // Automatically select the first KPI if available
       if (kpisData && kpisData.length > 0 && !selectedKpiId) {
@@ -169,7 +257,7 @@ export default function App() {
       const periods = ['Periodo 01', 'Periodo 02', 'Periodo 03'];
       return periods.map(p => {
         const pCommitments = commitments.filter(c => {
-          const cMonth = c.target_month.slice(0, 7); // 'YYYY-MM'
+          const cMonth = c.target_month ? c.target_month.slice(0, 7) : ''; // 'YYYY-MM'
           return cMonth === selectedMonth && c.period === p;
         });
         const total = pCommitments.length;
@@ -197,7 +285,7 @@ export default function App() {
     const kpi = kpis.find(k => k.id === kpiId);
     if (kpi && kpi.name === 'Efectiva Desarrollo') {
       // For Efectiva Desarrollo, the overall month average is the latest value
-      const monthCommitments = commitments.filter(c => c.target_month.slice(0, 7) === selectedMonth);
+      const monthCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === selectedMonth);
       if (monthCommitments.length === 0) return null;
       const total = monthCommitments.length;
       const delivered = monthCommitments.filter(c => c.delivery_date !== null).length;
@@ -215,7 +303,7 @@ export default function App() {
       const prevDate = new Date(current.getFullYear(), current.getMonth() - 1, 1);
       const prevMonthStr = prevDate.toISOString().slice(0, 7);
       
-      const prevCommitments = commitments.filter(c => c.target_month.slice(0, 7) === prevMonthStr);
+      const prevCommitments = commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === prevMonthStr);
       if (prevCommitments.length === 0) return null;
       const total = prevCommitments.length;
       const delivered = prevCommitments.filter(c => c.delivery_date !== null).length;
@@ -235,6 +323,207 @@ export default function App() {
     if (name.includes('calidad')) return 'qa';
     return '';
   }
+
+  function getKpiEntriesColor(kpi) {
+    if (!kpi) return '#6366f1';
+    const kpiUnit = units.find(u => u.id === kpi.unit_id);
+    return getUnitColorHex(kpiUnit?.name);
+  }
+
+  async function handleDeleteEntry(id) {
+    if (!confirm('¿Estás seguro de que deseas eliminar este registro?')) return;
+    try {
+      const { error } = await supabase
+        .from('kpi_entries')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      await fetchData();
+    } catch (err) {
+      console.error('Error deleting entry:', err);
+      alert('Error al eliminar registro: ' + err.message);
+    }
+  }
+
+  function renderSVGChart(kpi) {
+    const kpiEntries = getKpiEntries(kpi.id);
+    if (kpiEntries.length === 0) {
+      return (
+        <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)', fontSize: '13px' }}>
+          No hay suficientes datos registrados para generar el gráfico.
+        </div>
+      );
+    }
+
+    const width = 500;
+    const height = 200;
+    const paddingLeft = 40;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+
+    const chartWidth = width - paddingLeft - paddingRight;
+    const chartHeight = height - paddingTop - paddingBottom;
+
+    const values = kpiEntries.map(e => e.value);
+    const target = kpi.target_value;
+    const allValues = [...values, target];
+    const maxVal = Math.max(...allValues, 10);
+    const roundedMax = Math.ceil(maxVal * 1.2);
+
+    const pointsCount = kpiEntries.length;
+
+    const getX = (index) => {
+      if (pointsCount <= 1) return paddingLeft + chartWidth / 2;
+      return paddingLeft + (index / (pointsCount - 1)) * chartWidth;
+    };
+
+    const getY = (val) => {
+      const ratio = val / roundedMax;
+      return height - paddingBottom - ratio * chartHeight;
+    };
+
+    let pathD = '';
+    let areaD = '';
+
+    kpiEntries.forEach((entry, idx) => {
+      const x = getX(idx);
+      const y = getY(entry.value);
+      if (idx === 0) {
+        pathD = `M ${x} ${y}`;
+        areaD = `M ${x} ${height - paddingBottom} L ${x} ${y}`;
+      } else {
+        pathD += ` L ${x} ${y}`;
+        areaD += ` L ${x} ${y}`;
+      }
+    });
+
+    if (pointsCount > 0) {
+      const lastX = getX(pointsCount - 1);
+      areaD += ` L ${lastX} ${height - paddingBottom} Z`;
+    }
+
+    const targetY = getY(target);
+    const chartColor = getKpiEntriesColor(kpi);
+
+    return (
+      <div className="chart-container" style={{ marginTop: '15px', position: 'relative' }}>
+        <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+            const y = height - paddingBottom - ratio * chartHeight;
+            const val = Math.round(ratio * roundedMax);
+            return (
+              <g key={idx}>
+                <line 
+                  x1={paddingLeft} 
+                  y1={y} 
+                  x2={width - paddingRight} 
+                  y2={y} 
+                  stroke="rgba(255, 255, 255, 0.05)" 
+                  strokeWidth="1" 
+                />
+                <text 
+                  x={paddingLeft - 10} 
+                  y={y + 4} 
+                  textAnchor="end" 
+                  fill="var(--text-muted)" 
+                  fontSize="10px"
+                >
+                  {val}
+                </text>
+              </g>
+            );
+          })}
+
+          <line 
+            x1={paddingLeft} 
+            y1={targetY} 
+            x2={width - paddingRight} 
+            y2={targetY} 
+            stroke="#ef4444" 
+            strokeWidth="1.5" 
+            strokeDasharray="4 4" 
+          />
+          <text 
+            x={width - paddingRight - 5} 
+            y={targetY - 6} 
+            textAnchor="end" 
+            fill="#ef4444" 
+            fontSize="10px" 
+            fontWeight="bold"
+          >
+            Meta: {target}
+          </text>
+
+          {pointsCount > 1 && (
+            <path 
+              d={areaD} 
+              fill={`url(#area-gradient-${kpi.id})`}
+            />
+          )}
+
+          <path 
+            d={pathD} 
+            fill="none" 
+            stroke={chartColor} 
+            strokeWidth="3" 
+            strokeLinecap="round"
+            strokeLinejoin="round" 
+          />
+
+          {kpiEntries.map((entry, idx) => {
+            const x = getX(idx);
+            const y = getY(entry.value);
+            return (
+              <g key={idx} className="chart-dot-group">
+                <circle 
+                  cx={x} 
+                  cy={y} 
+                  r="5" 
+                  fill={chartColor} 
+                  stroke="var(--bg-secondary)" 
+                  strokeWidth="2" 
+                />
+                <title>{`Valor: ${entry.value}\nPeriodo: ${entry.period_end}`}</title>
+              </g>
+            );
+          })}
+
+          {kpiEntries.map((entry, idx) => {
+            const x = getX(idx);
+            let label = '';
+            if (kpi.name === 'Efectiva Desarrollo') {
+              label = entry.id;
+            } else {
+              const date = new Date(entry.period_end);
+              label = `${date.getDate()}/${date.getMonth() + 1}`;
+            }
+            return (
+              <text 
+                key={idx} 
+                x={x} 
+                y={height - paddingBottom + 18} 
+                textAnchor="middle" 
+                fill="var(--text-muted)" 
+                fontSize="10px"
+              >
+                {label}
+              </text>
+            );
+          })}
+
+          <defs>
+            <linearGradient id={`area-gradient-${kpi.id}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={chartColor} stopOpacity="0.25" />
+              <stop offset="100%" stopColor={chartColor} stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+    );
+  }
+
 
   function checkIsLowerBetter(kpiName) {
     if (!kpiName) return false;
@@ -530,7 +819,7 @@ export default function App() {
   const selectedKpiEntries = selectedKpi ? getKpiEntries(selectedKpi.id) : [];
   
   const selectedKpiCommitments = selectedKpi && selectedKpi.name === 'Efectiva Desarrollo'
-    ? commitments.filter(c => c.target_month.slice(0, 7) === selectedMonth)
+    ? commitments.filter(c => c.target_month && c.target_month.slice(0, 7) === selectedMonth)
     : [];
 
   const stats = getOverviewStats();
@@ -1304,5 +1593,13 @@ export default function App() {
         </div>
       </footer>
     </>
+  );
+}
+
+export default function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   );
 }
