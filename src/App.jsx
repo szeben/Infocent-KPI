@@ -3,7 +3,6 @@ import { supabase } from './supabaseClient';
 import { 
   TrendingUp, 
   Folder, 
-  Calendar, 
   Plus, 
   Trash2, 
   X, 
@@ -12,8 +11,59 @@ import {
   Award, 
   AlertCircle, 
   Database,
-  GitBranch
+  GitBranch,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Activity
 } from 'lucide-react';
+
+// Sub-component: Circular Progress Ring
+function CircularProgress({ percent, size = 60, strokeWidth = 5, color = '#6366f1' }) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const strokeDashoffset = circumference - (Math.min(percent, 100) / 100) * circumference;
+  
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="circular-progress" style={{ overflow: 'visible' }}>
+      <circle
+        stroke="rgba(255, 255, 255, 0.04)"
+        fill="transparent"
+        strokeWidth={strokeWidth}
+        r={radius}
+        cx={size / 2}
+        cy={size / 2}
+      />
+      <circle
+        stroke={color}
+        fill="transparent"
+        strokeWidth={strokeWidth}
+        strokeDasharray={circumference}
+        strokeDashoffset={strokeDashoffset}
+        strokeLinecap="round"
+        r={radius}
+        cx={size / 2}
+        cy={size / 2}
+        style={{
+          transform: 'rotate(-90deg)',
+          transformOrigin: '50% 50%',
+          transition: 'stroke-dashoffset 0.5s ease-in-out',
+        }}
+      />
+      <text
+        x="50%"
+        y="50%"
+        dy="4px"
+        textAnchor="middle"
+        fill="#ffffff"
+        fontSize="11px"
+        fontWeight="800"
+      >
+        {percent}%
+      </text>
+    </svg>
+  );
+}
 
 export default function App() {
   // State variables
@@ -65,7 +115,7 @@ export default function App() {
       const { data: entriesData, error: entriesErr } = await supabase
         .from('kpi_entries')
         .select('*')
-        .order('period_end', { ascending: true }); // chronological order for charts
+        .order('period_end', { ascending: true }); // chronological order
       if (entriesErr) throw entriesErr;
       setEntries(entriesData);
 
@@ -75,7 +125,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error fetching data:', err);
-      setErrorMsg('No se pudieron cargar los datos de Supabase. Por favor, verifica tu conexión y configuración de base de datos.');
+      setErrorMsg(`No se pudieron cargar los datos de Supabase: ${err.message || err.details || JSON.stringify(err)}. Por favor, verifica tu conexión y configuración de base de datos.`);
     } finally {
       setLoading(false);
     }
@@ -89,8 +139,13 @@ export default function App() {
   function getLatestValue(kpiId) {
     const kpiEntries = getKpiEntries(kpiId);
     if (kpiEntries.length === 0) return null;
-    // Entries are sorted by period_end ascending, so the last is the latest
     return kpiEntries[kpiEntries.length - 1].value;
+  }
+
+  function getPreviousValue(kpiId) {
+    const kpiEntries = getKpiEntries(kpiId);
+    if (kpiEntries.length < 2) return null;
+    return kpiEntries[kpiEntries.length - 2].value;
   }
 
   function getUnitColorClass(unitName) {
@@ -119,8 +174,22 @@ export default function App() {
       if (value <= target) return 100;
       return Math.max(0, Math.round((target / value) * 100));
     } else {
-      return Math.min(150, Math.round((value / target) * 100)); // Cap fulfillment visual progress at 150%
+      return Math.min(150, Math.round((value / target) * 100)); // Cap at 150%
     }
+  }
+
+  function getFulfillmentColor(fulfillment) {
+    if (fulfillment >= 100) return '#34d399'; // Green (Success)
+    if (fulfillment >= 85) return '#fbbf24';  // Amber/Yellow (Warning)
+    return '#ef4444';                         // Red (Alert)
+  }
+
+  function getUnitColorHex(unitName) {
+    const colorClass = getUnitColorClass(unitName);
+    if (colorClass === 'req') return '#c084fc';
+    if (colorClass === 'dev') return '#2dd4bf';
+    if (colorClass === 'qa') return '#34d399';
+    return '#6366f1';
   }
 
   // Calculate Unit Average Fulfillment
@@ -159,6 +228,62 @@ export default function App() {
     return countedKpis > 0 ? Math.round(totalFulfillment / countedKpis) : 0;
   }
 
+  // Statistics counters for overview
+  function getOverviewStats() {
+    let total = kpis.length;
+    let success = 0;
+    let warning = 0;
+    let alert = 0;
+    let activeCount = 0;
+
+    kpis.forEach(kpi => {
+      const val = getLatestValue(kpi.id);
+      if (val !== null) {
+        activeCount++;
+        const fulfillment = calculateFulfillment(kpi, val);
+        if (fulfillment >= 100) success++;
+        else if (fulfillment >= 85) warning++;
+        else alert++;
+      }
+    });
+
+    return { total, success, warning, alert, inactive: total - activeCount };
+  }
+
+  // Render Trend Indicator Arrow
+  function renderTrendIndicator(kpi) {
+    const latest = getLatestValue(kpi.id);
+    const prev = getPreviousValue(kpi.id);
+    
+    if (latest === null || prev === null) return null;
+    if (latest === prev) {
+      return (
+        <span style={{ color: 'var(--text-muted)', fontSize: '15px' }} title="Sin cambios respecto al periodo anterior">
+          →
+        </span>
+      );
+    }
+    
+    const isLowerBetter = checkIsLowerBetter(kpi.name);
+    const isIncrease = latest > prev;
+    const isPositive = isLowerBetter ? !isIncrease : isIncrease;
+    
+    return (
+      <span 
+        style={{ 
+          color: isPositive ? '#34d399' : '#ef4444', 
+          fontWeight: '800',
+          fontSize: '15px',
+          marginLeft: '4px',
+          display: 'inline-block'
+        }} 
+        title={isPositive ? `Mejoró (Ant: ${prev} → Act: ${latest})` : `Empeoró (Ant: ${prev} → Act: ${latest})`}
+      >
+        {isIncrease ? '↗' : '↘'}
+      </span>
+    );
+  }
+
   // Form submit handler
   async function handleSubmit(e) {
     e.preventDefault();
@@ -169,7 +294,7 @@ export default function App() {
 
     setSubmitting(true);
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('kpi_entries')
         .insert([
           {
@@ -179,8 +304,7 @@ export default function App() {
             period_end: formPeriodEnd,
             notes: formNotes || null
           }
-        ])
-        .select();
+        ]);
 
       if (error) throw error;
 
@@ -223,7 +347,6 @@ export default function App() {
   // Open modal helper
   function openAddModal(kpi) {
     setModalKpi(kpi);
-    // Preset period values (start of current month, end of current month)
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
     
@@ -259,17 +382,13 @@ export default function App() {
     const chartWidth = width - paddingLeft - paddingRight;
     const chartHeight = height - paddingTop - paddingBottom;
 
-    // Get value range
     const values = kpiEntries.map(e => e.value);
     const target = kpi.target_value;
     const allValues = [...values, target];
     
     const maxVal = Math.max(...allValues);
-    const minVal = 0; // standard baseline is 0
-    const valRange = maxVal - minVal || 1;
-    const roundedMax = Math.ceil(maxVal * 1.15); // Add 15% head room
+    const roundedMax = Math.ceil(maxVal * 1.15); // 15% headroom
 
-    // X coordinates: index to pixel
     const pointsCount = kpiEntries.length;
     
     const getX = (index) => {
@@ -277,13 +396,11 @@ export default function App() {
       return paddingLeft + (index / (pointsCount - 1)) * chartWidth;
     };
 
-    // Y coordinates: value to pixel
     const getY = (val) => {
       const ratio = val / roundedMax;
       return height - paddingBottom - ratio * chartHeight;
     };
 
-    // Generate path for the line
     let pathD = '';
     let areaD = '';
     
@@ -320,7 +437,7 @@ export default function App() {
             </filter>
           </defs>
 
-          {/* Grid lines & Y Axis values */}
+          {/* Grid lines */}
           {[0, 0.25, 0.5, 0.75, 1].map((r, i) => {
             const gridVal = roundedMax * r;
             const y = getY(gridVal);
@@ -334,15 +451,13 @@ export default function App() {
             );
           })}
 
-          {/* Baseline X-axis */}
           <line x1={paddingLeft} y1={height - paddingBottom} x2={width - paddingRight} y2={height - paddingBottom} className="chart-axis-line" />
 
-          {/* Area under the line */}
           {pointsCount > 1 && (
             <path d={areaD} fill="url(#chartAreaGradient)" />
           )}
 
-          {/* Target Line */}
+          {/* Target line */}
           <line 
             x1={paddingLeft} 
             y1={targetY} 
@@ -350,11 +465,10 @@ export default function App() {
             y2={targetY} 
             className="chart-target-line" 
           />
-          <text x={width - paddingRight} y={targetY - 6} textAnchor="end" className="chart-axis-text" fill="#f59e0b" fontWeight="600">
+          <text x={width - paddingRight} y={targetY - 6} textAnchor="end" className="chart-axis-text" fill="#f59e0b" fontWeight="700">
             Meta: {target}
           </text>
 
-          {/* Line Chart */}
           {pointsCount > 1 && (
             <path d={pathD} fill="none" stroke={unitColor} className="chart-line" filter="url(#glow)" />
           )}
@@ -378,7 +492,8 @@ export default function App() {
                   textAnchor="middle" 
                   className="chart-axis-text" 
                   fontWeight="700" 
-                  fill={unitColor}
+                  fill="#ffffff"
+                  style={{ textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}
                 >
                   {entry.value}
                 </text>
@@ -386,7 +501,7 @@ export default function App() {
             );
           })}
 
-          {/* X Axis Labels (Dates) */}
+          {/* Date labels */}
           {kpiEntries.map((entry, idx) => {
             const x = getX(idx);
             const date = new Date(entry.period_end);
@@ -410,11 +525,7 @@ export default function App() {
 
   function getKpiEntriesColor(kpi) {
     const kpiUnit = units.find(u => u.id === kpi.unit_id);
-    const unitClass = getUnitColorClass(kpiUnit?.name);
-    if (unitClass === 'req') return '#c084fc';
-    if (unitClass === 'dev') return '#2dd4bf';
-    if (unitClass === 'qa') return '#34d399';
-    return '#6366f1';
+    return getUnitColorHex(kpiUnit?.name);
   }
 
   // Filters
@@ -426,6 +537,8 @@ export default function App() {
   const selectedKpiUnit = selectedKpi ? units.find(u => u.id === selectedKpi.unit_id) : null;
   const selectedKpiEntries = selectedKpi ? getKpiEntries(selectedKpi.id) : [];
 
+  const stats = getOverviewStats();
+
   return (
     <>
       {/* Header */}
@@ -433,25 +546,25 @@ export default function App() {
         <div className="header-container">
           <div className="logo-section">
             <div className="logo-icon">
-              <Layers size={22} />
+              <Activity size={22} />
             </div>
             <div className="logo-text">
               <h1>Infocent-KPI</h1>
-              <p>Control de Métricas</p>
+              <p>Métricas de Ingeniería</p>
             </div>
           </div>
           
           <div className="header-stats">
             <div className="stat-item">
               <div className="stat-label">Conexión</div>
-              <div className="stat-value" style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px' }}>
+              <div className="stat-value" style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
                 <span style={{ display: 'inline-block', width: '8px', height: '8px', background: '#34d399', borderRadius: '50%' }}></span>
-                Supabase Online
+                Supabase Conectado
               </div>
             </div>
             <div className="stat-item">
               <div className="stat-label">Cumplimiento Global</div>
-              <div className="stat-value" style={{ color: '#6366f1' }}>
+              <div className="stat-value" style={{ color: 'var(--color-primary)' }}>
                 {getOverallAverageFulfillment()}%
               </div>
             </div>
@@ -483,186 +596,342 @@ export default function App() {
             <button className="btn btn-primary" onClick={fetchData}>Reintentar Conexión</button>
           </div>
         ) : (
-          <div className="dashboard-grid">
-            
-            {/* Left Panel: Units and KPI Cards */}
-            <div>
-              {/* Tab Navigation */}
-              <nav className="tabs-nav">
-                <button 
-                  className={`tab-btn tab-all ${activeTab === 'all' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('all')}
-                >
-                  <Layers size={16} /> Todo
-                </button>
-                {units.map(unit => {
-                  const colorClass = getUnitColorClass(unit.name);
-                  const isSelected = activeTab === unit.id;
-                  const fulfillment = getUnitAverageFulfillment(unit.id);
-                  return (
-                    <button 
-                      key={unit.id}
-                      className={`tab-btn tab-${colorClass} ${isSelected ? 'active' : ''}`}
-                      onClick={() => setActiveTab(unit.id)}
-                    >
-                      <Folder size={16} />
-                      {unit.name} ({fulfillment}%)
-                    </button>
-                  );
-                })}
-              </nav>
+          <div>
+            {/* Tab Navigation */}
+            <nav className="tabs-nav">
+              <button 
+                className={`tab-btn tab-all ${activeTab === 'all' ? 'active' : ''}`}
+                onClick={() => setActiveTab('all')}
+              >
+                <Layers size={16} /> Resumen General
+              </button>
+              {units.map(unit => {
+                const colorClass = getUnitColorClass(unit.name);
+                const isSelected = activeTab === unit.id;
+                const fulfillment = getUnitAverageFulfillment(unit.id);
+                return (
+                  <button 
+                    key={unit.id}
+                    className={`tab-btn tab-${colorClass} ${isSelected ? 'active' : ''}`}
+                    onClick={() => setActiveTab(unit.id)}
+                  >
+                    <Folder size={16} />
+                    {unit.name} ({fulfillment}%)
+                  </button>
+                );
+              })}
+            </nav>
 
-              {/* KPI Cards Grid */}
-              <div className="kpi-grid">
-                {filteredKpis.map(kpi => {
-                  const unit = units.find(u => u.id === kpi.unit_id);
-                  const colorClass = getUnitColorClass(unit?.name);
-                  const latestVal = getLatestValue(kpi.id);
-                  const fulfillment = calculateFulfillment(kpi, latestVal);
-                  const isSelected = selectedKpiId === kpi.id;
+            {/* Layout switch: Resumen General vs. Unit Tabs */}
+            {activeTab === 'all' ? (
+              /* Executive Overview Panel (Fase 3 Feature) */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                
+                {/* Stats row */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                  <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
+                      <Activity size={24} />
+                    </div>
+                    <div>
+                      <div className="stat-label" style={{ textAlign: 'left' }}>Total Indicadores</div>
+                      <div style={{ fontSize: '24px', fontWeight: '800', fontFamily: 'var(--font-heading)' }}>{stats.total}</div>
+                    </div>
+                  </div>
 
-                  return (
-                    <article 
-                      key={kpi.id}
-                      className={`glass-panel kpi-card ${colorClass} ${isSelected ? 'active-kpi' : ''}`}
-                      style={{
-                        borderColor: isSelected ? getKpiEntriesColor(kpi) : 'var(--border-glass)',
-                        boxShadow: isSelected ? `0 0 16px ${getKpiEntriesColor(kpi)}30` : ''
-                      }}
-                      onClick={() => setSelectedKpiId(kpi.id)}
-                    >
-                      <div>
-                        <div className="kpi-card-header">
-                          <div className="kpi-card-meta">
-                            <span className="kpi-unit-tag">{unit?.name}</span>
-                            <h3 className="kpi-name">{kpi.name}</h3>
+                  <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                      <CheckCircle2 size={24} />
+                    </div>
+                    <div>
+                      <div className="stat-label" style={{ textAlign: 'left' }}>En Meta (Favorable)</div>
+                      <div style={{ fontSize: '24px', fontWeight: '800', fontFamily: 'var(--font-heading)', color: '#34d399' }}>{stats.success}</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}>
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <div className="stat-label" style={{ textAlign: 'left' }}>Advertencia</div>
+                      <div style={{ fontSize: '24px', fontWeight: '800', fontFamily: 'var(--font-heading)', color: '#fbbf24' }}>{stats.warning}</div>
+                    </div>
+                  </div>
+
+                  <div className="glass-panel" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                      <XCircle size={24} />
+                    </div>
+                    <div>
+                      <div className="stat-label" style={{ textAlign: 'left' }}>En Alerta Crítica</div>
+                      <div style={{ fontSize: '24px', fontWeight: '800', fontFamily: 'var(--font-heading)', color: '#ef4444' }}>{stats.alert}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Units comparison & radial gauges */}
+                <div className="glass-panel" style={{ padding: '24px' }}>
+                  <h3 style={{ fontSize: '18px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Layers size={18} style={{ color: 'var(--color-primary)' }} />
+                    Cumplimiento Promedio por Unidad de Negocio
+                  </h3>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px' }}>
+                    {units.map(unit => {
+                      const fulfillment = getUnitAverageFulfillment(unit.id);
+                      const colorHex = getUnitColorHex(unit.name);
+                      const unitKpis = kpis.filter(k => k.unit_id === unit.id);
+                      
+                      return (
+                        <div key={unit.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '12px' }}>
+                          <h4 style={{ fontSize: '15px', color: 'var(--text-secondary)', marginBottom: '16px' }}>{unit.name}</h4>
+                          <CircularProgress percent={fulfillment} size={100} strokeWidth={8} color={colorHex} />
+                          
+                          <div style={{ width: '100%', marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                              Detalle de Indicadores ({unitKpis.length})
+                            </div>
+                            {unitKpis.map(kpi => {
+                              const val = getLatestValue(kpi.id);
+                              const kpiFulfillment = calculateFulfillment(kpi, val);
+                              const statusColor = val !== null ? getFulfillmentColor(kpiFulfillment) : 'var(--text-muted)';
+                              
+                              return (
+                                <div 
+                                  key={kpi.id} 
+                                  style={{ display: 'flex', justifyItems: 'center', justifyContent: 'space-between', fontSize: '12px', cursor: 'pointer' }}
+                                  onClick={() => {
+                                    setSelectedKpiId(kpi.id);
+                                    setActiveTab(unit.id); // switch tab to unit for detail view
+                                  }}
+                                >
+                                  <span style={{ color: 'var(--text-primary)', textDecoration: 'underline', textUnderlineOffset: '3px' }}>{kpi.name}</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ fontWeight: '700', color: statusColor }}>
+                                      {val !== null ? `${val} (${kpiFulfillment}%)` : 'Sin datos'}
+                                    </span>
+                                    {renderTrendIndicator(kpi)}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>
-                            {kpi.frequency}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Compare chart */}
+                <div className="glass-panel" style={{ padding: '24px' }}>
+                  <h3 style={{ fontSize: '18px', marginBottom: '20px' }}>Comparación Directa de Cumplimiento</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '600px', margin: '0 auto' }}>
+                    {units.map(unit => {
+                      const fulfillment = getUnitAverageFulfillment(unit.id);
+                      const colorHex = getUnitColorHex(unit.name);
+                      
+                      return (
+                        <div key={unit.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                            <span style={{ fontWeight: '600' }}>{unit.name}</span>
+                            <span style={{ fontWeight: '700', color: colorHex }}>{fulfillment}% cumplido</span>
+                          </div>
+                          <div style={{ width: '100%', height: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <div 
+                              style={{ 
+                                height: '100%', 
+                                width: `${fulfillment}%`, 
+                                background: `linear-gradient(to right, #6366f1, ${colorHex})`,
+                                borderRadius: '6px',
+                                boxShadow: `0 0 10px ${colorHex}50`
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              /* Normal Tab Grid Layout (Filtered by Unit) */
+              <div className="dashboard-grid">
+                
+                {/* Left Panel: KPI Cards */}
+                <div>
+                  <div className="kpi-grid">
+                    {filteredKpis.map(kpi => {
+                      const unit = units.find(u => u.id === kpi.unit_id);
+                      const colorClass = getUnitColorClass(unit?.name);
+                      const latestVal = getLatestValue(kpi.id);
+                      const fulfillment = calculateFulfillment(kpi, latestVal);
+                      const isSelected = selectedKpiId === kpi.id;
+                      const isPercentage = kpi.unit_of_measure === 'Porcentaje';
+                      const statusColor = latestVal !== null ? getFulfillmentColor(fulfillment) : 'var(--text-muted)';
+
+                      return (
+                        <article 
+                          key={kpi.id}
+                          className={`glass-panel kpi-card ${colorClass} ${isSelected ? 'active-kpi' : ''}`}
+                          style={{
+                            borderColor: isSelected ? getKpiEntriesColor(kpi) : 'var(--border-glass)',
+                            boxShadow: isSelected ? `0 0 16px ${getKpiEntriesColor(kpi)}30` : ''
+                          }}
+                          onClick={() => setSelectedKpiId(kpi.id)}
+                        >
+                          <div>
+                            <div className="kpi-card-header">
+                              <div className="kpi-card-meta">
+                                <span className="kpi-unit-tag">{unit?.name}</span>
+                                <h3 className="kpi-name">{kpi.name}</h3>
+                              </div>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>
+                                {kpi.frequency}
+                              </span>
+                            </div>
+                            <p className="kpi-desc">{kpi.description}</p>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '16px' }}>
+                            {/* Layout: Circular Ring for % or Value Block for others */}
+                            {isPercentage && latestVal !== null ? (
+                              <div className="kpi-indicator-ring">
+                                <CircularProgress percent={fulfillment} size={60} strokeWidth={5} color={statusColor} />
+                              </div>
+                            ) : null}
+
+                            <div style={{ flexGrow: 1 }}>
+                              <div className="kpi-values-row" style={{ border: 'none', padding: '0', marginTop: '0' }}>
+                                <div className="current-value-container">
+                                  <span className="val-label">Estado Actual</span>
+                                  <span className="val-num" style={{ color: statusColor, display: 'inline-flex', alignItems: 'center' }}>
+                                    {latestVal !== null ? latestVal : '-'}
+                                    <span style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)', marginLeft: '3px' }}>
+                                      {kpi.unit_of_measure}
+                                    </span>
+                                    {renderTrendIndicator(kpi)}
+                                  </span>
+                                </div>
+
+                                <div className="target-container">
+                                  <span className="val-label">Meta</span>
+                                  <div className="target-val">
+                                    {kpi.target_value} {kpi.unit_of_measure}
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: statusColor }}>
+                                    {latestVal !== null ? `${fulfillment}% Meta` : 'Sin registros'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Progress bar (only for non-percentage or empty states to keep visual balance) */}
+                              {!isPercentage || latestVal === null ? (
+                                <div className="kpi-progress-bar-bg" style={{ marginTop: '8px' }}>
+                                  <div 
+                                    className="kpi-progress-bar-fill"
+                                    style={{ 
+                                      width: `${latestVal !== null ? Math.min(fulfillment, 100) : 0}%`,
+                                      background: statusColor,
+                                      boxShadow: `0 0 8px ${statusColor}40`
+                                    }}
+                                  ></div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right Panel: KPI Details, Charts, History Logs */}
+                <aside>
+                  {selectedKpi ? (
+                    <div className="glass-panel kpi-detail-view" style={{ borderColor: `${getKpiEntriesColor(selectedKpi)}40` }}>
+                      <div className="detail-header">
+                        <div className="detail-title-section">
+                          <span className="kpi-unit-tag" style={{ background: `${getKpiEntriesColor(selectedKpi)}15`, color: getKpiEntriesColor(selectedKpi) }}>
+                            {selectedKpiUnit?.name}
+                          </span>
+                          <h2>{selectedKpi.name}</h2>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{selectedKpi.description}</p>
+                        </div>
+                        <button 
+                          className="btn btn-primary"
+                          onClick={() => openAddModal(selectedKpi)}
+                        >
+                          <Plus size={16} /> Registrar
+                        </button>
+                      </div>
+
+                      {/* SVG Chart */}
+                      <div>
+                        <h3 style={{ fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <TrendingUp size={16} style={{ color: getKpiEntriesColor(selectedKpi) }} /> Historial de Avance
+                        </h3>
+                        {renderSVGChart(selectedKpi)}
+                      </div>
+
+                      {/* Historic List */}
+                      <div className="history-section">
+                        <div className="history-title">
+                          <span>Registros Históricos</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
+                            {selectedKpiEntries.length} entradas
                           </span>
                         </div>
-                        <p className="kpi-desc">{kpi.description}</p>
-                      </div>
 
-                      <div>
-                        <div className="kpi-values-row">
-                          <div className="current-value-container">
-                            <span className="val-label">Estado Actual</span>
-                            <span className="val-num">
-                              {latestVal !== null ? latestVal : '-'}
-                              <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-secondary)', marginLeft: '4px' }}>
-                                {kpi.unit_of_measure}
-                              </span>
-                            </span>
+                        {selectedKpiEntries.length === 0 ? (
+                          <p style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
+                            Registra el primer valor para visualizar el listado.
+                          </p>
+                        ) : (
+                          <div className="history-list">
+                            {[...selectedKpiEntries].reverse().map(entry => {
+                              const date = new Date(entry.period_end);
+                              const formattedDate = date.toLocaleDateString('es-ES', { 
+                                day: 'numeric', 
+                                month: 'short', 
+                                year: 'numeric' 
+                              });
+
+                              return (
+                                <div key={entry.id} className="history-item">
+                                  <div className="history-item-left">
+                                    <span className="history-date">{formattedDate}</span>
+                                    {entry.notes && <span className="history-note">{entry.notes}</span>}
+                                  </div>
+                                  <div className="history-item-right">
+                                    <span className="history-value" style={{ color: getKpiEntriesColor(selectedKpi) }}>
+                                      {entry.value} {selectedKpi.unit_of_measure}
+                                    </span>
+                                    <button 
+                                      className="history-delete-btn"
+                                      onClick={() => handleDeleteEntry(entry.id)}
+                                      title="Eliminar registro"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-
-                          <div className="target-container">
-                            <span className="val-label">Meta</span>
-                            <div className="target-val">
-                              {kpi.target_value} {kpi.unit_of_measure}
-                            </div>
-                            <div style={{ fontSize: '11px', color: latestVal !== null ? (fulfillment >= 100 ? '#34d399' : '#f59e0b') : 'var(--text-muted)' }}>
-                              {latestVal !== null ? `${fulfillment}% Meta` : 'Sin registros'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="kpi-progress-bar-bg">
-                          <div 
-                            className="kpi-progress-bar-fill"
-                            style={{ width: `${latestVal !== null ? Math.min(fulfillment, 100) : 0}%` }}
-                          ></div>
-                        </div>
+                        )}
                       </div>
-                    </article>
-                  );
-                })}
+                    </div>
+                  ) : (
+                    <div className="glass-panel empty-state">
+                      <Info className="empty-icon" />
+                      <p>Selecciona un KPI del listado para ver su gráfico e historial de registros.</p>
+                    </div>
+                  )}
+                </aside>
               </div>
-            </div>
-
-            {/* Right Panel: KPI Details, Charts, History Logs */}
-            <aside>
-              {selectedKpi ? (
-                <div className="glass-panel kpi-detail-view" style={{ borderColor: `${getKpiEntriesColor(selectedKpi)}40` }}>
-                  <div className="detail-header">
-                    <div className="detail-title-section">
-                      <span className="kpi-unit-tag" style={{ background: `${getKpiEntriesColor(selectedKpi)}15`, color: getKpiEntriesColor(selectedKpi) }}>
-                        {selectedKpiUnit?.name}
-                      </span>
-                      <h2>{selectedKpi.name}</h2>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{selectedKpi.description}</p>
-                    </div>
-                    <button 
-                      className="btn btn-primary"
-                      onClick={() => openAddModal(selectedKpi)}
-                    >
-                      <Plus size={16} /> Registrar
-                    </button>
-                  </div>
-
-                  {/* SVG Chart */}
-                  <div>
-                    <h3 style={{ fontSize: '14px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <TrendingUp size={16} style={{ color: getKpiEntriesColor(selectedKpi) }} /> Historial de Avance
-                    </h3>
-                    {renderSVGChart(selectedKpi)}
-                  </div>
-
-                  {/* Historic List */}
-                  <div className="history-section">
-                    <div className="history-title">
-                      <span>Registros Históricos</span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
-                        {selectedKpiEntries.length} entradas
-                      </span>
-                    </div>
-
-                    {selectedKpiEntries.length === 0 ? (
-                      <p style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
-                        Registra el primer valor para visualizar el listado.
-                      </p>
-                    ) : (
-                      <div className="history-list">
-                        {[...selectedKpiEntries].reverse().map(entry => {
-                          const date = new Date(entry.period_end);
-                          const formattedDate = date.toLocaleDateString('es-ES', { 
-                            day: 'numeric', 
-                            month: 'short', 
-                            year: 'numeric' 
-                          });
-
-                          return (
-                            <div key={entry.id} className="history-item">
-                              <div className="history-item-left">
-                                <span className="history-date">{formattedDate}</span>
-                                {entry.notes && <span className="history-note">{entry.notes}</span>}
-                              </div>
-                              <div className="history-item-right">
-                                <span className="history-value" style={{ color: getKpiEntriesColor(selectedKpi) }}>
-                                  {entry.value} {selectedKpi.unit_of_measure}
-                                </span>
-                                <button 
-                                  className="history-delete-btn"
-                                  onClick={() => handleDeleteEntry(entry.id)}
-                                  title="Eliminar registro"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="glass-panel empty-state">
-                  <Info className="empty-icon" />
-                  <p>Selecciona un KPI del listado para ver su gráfico e historial de registros.</p>
-                </div>
-              )}
-            </aside>
+            )}
           </div>
         )}
       </main>
