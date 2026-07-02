@@ -15,7 +15,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  Activity
+  Activity,
+  Check,
+  User,
+  FileText,
+  Image,
+  Upload,
+  Calendar
 } from 'lucide-react';
 
 // Sub-component: Circular Progress Ring
@@ -70,20 +76,35 @@ export default function App() {
   const [units, setUnits] = useState([]);
   const [kpis, setKpis] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [commitments, setCommitments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   
   // Navigation & Selection
   const [activeTab, setActiveTab] = useState('all'); // 'all' or unit.id
   const [selectedKpiId, setSelectedKpiId] = useState(null);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // 'YYYY-MM'
   
-  // Form Modal
+  // Form Modal (General / Commitments)
   const [showModal, setShowModal] = useState(false);
   const [modalKpi, setModalKpi] = useState(null);
+  
+  // Form Fields - Regular KPI
   const [formValue, setFormValue] = useState('');
   const [formPeriodStart, setFormPeriodStart] = useState('');
   const [formPeriodEnd, setFormPeriodEnd] = useState('');
   const [formNotes, setFormNotes] = useState('');
+  
+  // Form Fields - Dev Commitment (Efectiva Desarrollo)
+  const [devReportNum, setDevReportNum] = useState('');
+  const [devPriority, setDevPriority] = useState('');
+  const [devDeveloper, setDevDeveloper] = useState('');
+  const [devPeriod, setDevPeriod] = useState('Periodo 01');
+  const [devMonth, setDevMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [devDeliveryDate, setDevDeliveryDate] = useState('');
+  const [devNotes, setDevNotes] = useState('');
+  const [devFile, setDevFile] = useState(null);
+
   const [submitting, setSubmitting] = useState(false);
 
   // Fetch initial data
@@ -111,13 +132,21 @@ export default function App() {
       if (kpisErr) throw kpisErr;
       setKpis(kpisData);
 
-      // 3. Fetch KPI Entries
+      // 3. Fetch KPI Entries (for general KPIs)
       const { data: entriesData, error: entriesErr } = await supabase
         .from('kpi_entries')
         .select('*')
-        .order('period_end', { ascending: true }); // chronological order
+        .order('period_end', { ascending: true }); // chronological
       if (entriesErr) throw entriesErr;
       setEntries(entriesData);
+
+      // 4. Fetch Dev Commitments (for Efectiva Desarrollo KPI)
+      const { data: commitmentsData, error: commitmentsErr } = await supabase
+        .from('dev_commitments')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (commitmentsErr) throw commitmentsErr;
+      setCommitments(commitmentsData);
 
       // Automatically select the first KPI if available
       if (kpisData && kpisData.length > 0 && !selectedKpiId) {
@@ -133,16 +162,66 @@ export default function App() {
 
   // Helpers
   function getKpiEntries(kpiId) {
+    const kpi = kpis.find(k => k.id === kpiId);
+    
+    // Check if it's the custom dynamic KPI
+    if (kpi && kpi.name === 'Efectiva Desarrollo') {
+      const periods = ['Periodo 01', 'Periodo 02', 'Periodo 03'];
+      return periods.map(p => {
+        const pCommitments = commitments.filter(c => {
+          const cMonth = c.target_month.slice(0, 7); // 'YYYY-MM'
+          return cMonth === selectedMonth && c.period === p;
+        });
+        const total = pCommitments.length;
+        const delivered = pCommitments.filter(c => c.delivery_date !== null).length;
+        // Default to 100% fulfillment if no report commits exist for the period
+        const val = total > 0 ? Math.round((delivered / total) * 100) : 100;
+        
+        return {
+          id: p,
+          kpi_id: kpiId,
+          value: val,
+          period_end: p === 'Periodo 01' ? `${selectedMonth}-10` : p === 'Periodo 02' ? `${selectedMonth}-20` : `${selectedMonth}-28`,
+          notes: `${delivered} de ${total} entregados`
+        };
+      });
+    }
+
     return entries.filter(e => e.kpi_id === kpiId);
   }
 
   function getLatestValue(kpiId) {
     const kpiEntries = getKpiEntries(kpiId);
     if (kpiEntries.length === 0) return null;
+    
+    const kpi = kpis.find(k => k.id === kpiId);
+    if (kpi && kpi.name === 'Efectiva Desarrollo') {
+      // For Efectiva Desarrollo, the overall month average is the latest value
+      const monthCommitments = commitments.filter(c => c.target_month.slice(0, 7) === selectedMonth);
+      if (monthCommitments.length === 0) return null;
+      const total = monthCommitments.length;
+      const delivered = monthCommitments.filter(c => c.delivery_date !== null).length;
+      return Math.round((delivered / total) * 100);
+    }
+    
     return kpiEntries[kpiEntries.length - 1].value;
   }
 
   function getPreviousValue(kpiId) {
+    const kpi = kpis.find(k => k.id === kpiId);
+    if (kpi && kpi.name === 'Efectiva Desarrollo') {
+      // Compare current month with the previous month
+      const current = new Date(`${selectedMonth}-02`);
+      const prevDate = new Date(current.getFullYear(), current.getMonth() - 1, 1);
+      const prevMonthStr = prevDate.toISOString().slice(0, 7);
+      
+      const prevCommitments = commitments.filter(c => c.target_month.slice(0, 7) === prevMonthStr);
+      if (prevCommitments.length === 0) return null;
+      const total = prevCommitments.length;
+      const delivered = prevCommitments.filter(c => c.delivery_date !== null).length;
+      return Math.round((delivered / total) * 100);
+    }
+
     const kpiEntries = getKpiEntries(kpiId);
     if (kpiEntries.length < 2) return null;
     return kpiEntries[kpiEntries.length - 2].value;
@@ -174,7 +253,7 @@ export default function App() {
       if (value <= target) return 100;
       return Math.max(0, Math.round((target / value) * 100));
     } else {
-      return Math.min(150, Math.round((value / target) * 100)); // Cap at 150%
+      return Math.min(150, Math.round((value / target) * 100)); // Cap visual fill
     }
   }
 
@@ -192,7 +271,7 @@ export default function App() {
     return '#6366f1';
   }
 
-  // Calculate Unit Average Fulfillment
+  // Unit Averages
   function getUnitAverageFulfillment(unitId) {
     const unitKpis = kpis.filter(k => k.unit_id === unitId);
     if (unitKpis.length === 0) return 0;
@@ -211,7 +290,7 @@ export default function App() {
     return countedKpis > 0 ? Math.round(totalFulfillment / countedKpis) : 0;
   }
 
-  // Overall system average
+  // System averages
   function getOverallAverageFulfillment() {
     if (kpis.length === 0) return 0;
     let totalFulfillment = 0;
@@ -228,7 +307,6 @@ export default function App() {
     return countedKpis > 0 ? Math.round(totalFulfillment / countedKpis) : 0;
   }
 
-  // Statistics counters for overview
   function getOverviewStats() {
     let total = kpis.length;
     let success = 0;
@@ -250,7 +328,6 @@ export default function App() {
     return { total, success, warning, alert, inactive: total - activeCount };
   }
 
-  // Render Trend Indicator Arrow
   function renderTrendIndicator(kpi) {
     const latest = getLatestValue(kpi.id);
     const prev = getPreviousValue(kpi.id);
@@ -285,7 +362,7 @@ export default function App() {
   }
 
   // Form submit handler
-  async function handleSubmit(e) {
+  async function handleGeneralSubmit(e) {
     e.preventDefault();
     if (!formValue || !formPeriodStart || !formPeriodEnd) {
       alert('Por favor, rellena todos los campos obligatorios.');
@@ -308,224 +385,139 @@ export default function App() {
 
       if (error) throw error;
 
-      // Close modal & reset form
       setShowModal(false);
       setFormValue('');
       setFormPeriodStart('');
       setFormPeriodEnd('');
       setFormNotes('');
-      
-      // Refresh Data
       await fetchData();
     } catch (err) {
-      console.error('Error inserting KPI record:', err);
-      alert('Error al registrar el KPI: ' + err.message);
+      console.error('Error inserting KPI:', err);
+      alert('Error al registrar valor: ' + err.message);
     } finally {
       setSubmitting(false);
     }
   }
 
-  // Delete handler
-  async function handleDeleteEntry(entryId) {
-    if (!confirm('¿Estás seguro de que deseas eliminar este registro histórico?')) return;
+  // Dev Commitment Submit handler
+  async function handleDevCommitmentSubmit(e) {
+    e.preventDefault();
+    if (!devReportNum || !devPriority || !devDeveloper || !devPeriod || !devMonth) {
+      alert('Por favor, completa los campos requeridos (*).');
+      return;
+    }
+
+    setSubmitting(true);
     try {
+      let attachmentUrl = null;
+
+      // Upload file if selected
+      if (devFile) {
+        const fileExt = devFile.name.split('.').pop();
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('attachments')
+          .upload(fileName, devFile);
+
+        if (uploadError) {
+          console.warn('Could not upload attachment (ignoring and proceeding):', uploadError);
+        } else {
+          const { data: urlData } = supabase.storage
+            .from('attachments')
+            .getPublicUrl(fileName);
+          attachmentUrl = urlData.publicUrl;
+        }
+      }
+
       const { error } = await supabase
-        .from('kpi_entries')
-        .delete()
-        .eq('id', entryId);
+        .from('dev_commitments')
+        .insert([
+          {
+            report_number: devReportNum,
+            priority: parseInt(devPriority),
+            developer_name: devDeveloper,
+            period: devPeriod,
+            target_month: `${devMonth}-01`,
+            delivery_date: devDeliveryDate || null,
+            notes: devNotes || null,
+            attachment_url: attachmentUrl
+          }
+        ]);
 
       if (error) throw error;
-      
-      // Refresh Data
+
+      setShowModal(false);
+      setDevReportNum('');
+      setDevPriority('');
+      setDevDeveloper('');
+      setDevPeriod('Periodo 01');
+      setDevDeliveryDate('');
+      setDevNotes('');
+      setDevFile(null);
       await fetchData();
     } catch (err) {
-      console.error('Error deleting KPI record:', err);
-      alert('Error al eliminar el registro: ' + err.message);
+      console.error('Error saving commitment:', err);
+      alert('Error al guardar compromiso: ' + err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Commitment Toggles & Deletes
+  async function toggleCommitmentDelivery(id, currentDelivery) {
+    const nextDelivery = currentDelivery ? null : new Date().toISOString().split('T')[0];
+    try {
+      const { error } = await supabase
+        .from('dev_commitments')
+        .update({ delivery_date: nextDelivery })
+        .eq('id', id);
+
+      if (error) throw error;
+      await fetchData();
+    } catch (err) {
+      console.error('Error updating delivery:', err);
+      alert('Error: ' + err.message);
+    }
+  }
+
+  async function handleDeleteCommitment(id) {
+    if (!confirm('¿Estás seguro de que deseas eliminar este compromiso?')) return;
+    try {
+      const { error } = await supabase
+        .from('dev_commitments')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      await fetchData();
+    } catch (err) {
+      console.error('Error deleting commitment:', err);
+      alert('Error: ' + err.message);
     }
   }
 
   // Open modal helper
   function openAddModal(kpi) {
     setModalKpi(kpi);
-    const today = new Date();
-    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-    
-    setFormPeriodStart(firstDay.toISOString().split('T')[0]);
-    setFormPeriodEnd(today.toISOString().split('T')[0]);
-    setFormValue('');
-    setFormNotes('');
+    if (kpi.name === 'Efectiva Desarrollo') {
+      setDevMonth(selectedMonth);
+      setDevReportNum('');
+      setDevPriority('');
+      setDevDeveloper('');
+      setDevPeriod('Periodo 01');
+      setDevDeliveryDate('');
+      setDevNotes('');
+      setDevFile(null);
+    } else {
+      const today = new Date();
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      setFormPeriodStart(firstDay.toISOString().split('T')[0]);
+      setFormPeriodEnd(today.toISOString().split('T')[0]);
+      setFormValue('');
+      setFormNotes('');
+    }
     setShowModal(true);
-  }
-
-  // Render SVG Line Chart
-  function renderSVGChart(kpi) {
-    const kpiEntries = getKpiEntries(kpi.id);
-    if (kpiEntries.length === 0) {
-      return (
-        <div className="empty-state">
-          <TrendingUp className="empty-icon" />
-          <p>No hay datos registrados aún para este KPI.</p>
-          <button className="btn btn-secondary btn-sm" onClick={() => openAddModal(kpi)}>
-            <Plus size={16} /> Registrar Primer Valor
-          </button>
-        </div>
-      );
-    }
-
-    const width = 600;
-    const height = 240;
-    const paddingLeft = 50;
-    const paddingRight = 30;
-    const paddingTop = 20;
-    const paddingBottom = 40;
-    
-    const chartWidth = width - paddingLeft - paddingRight;
-    const chartHeight = height - paddingTop - paddingBottom;
-
-    const values = kpiEntries.map(e => e.value);
-    const target = kpi.target_value;
-    const allValues = [...values, target];
-    
-    const maxVal = Math.max(...allValues);
-    const roundedMax = Math.ceil(maxVal * 1.15); // 15% headroom
-
-    const pointsCount = kpiEntries.length;
-    
-    const getX = (index) => {
-      if (pointsCount <= 1) return paddingLeft + chartWidth / 2;
-      return paddingLeft + (index / (pointsCount - 1)) * chartWidth;
-    };
-
-    const getY = (val) => {
-      const ratio = val / roundedMax;
-      return height - paddingBottom - ratio * chartHeight;
-    };
-
-    let pathD = '';
-    let areaD = '';
-    
-    kpiEntries.forEach((entry, idx) => {
-      const x = getX(idx);
-      const y = getY(entry.value);
-      if (idx === 0) {
-        pathD = `M ${x} ${y}`;
-        areaD = `M ${x} ${height - paddingBottom} L ${x} ${y}`;
-      } else {
-        pathD += ` L ${x} ${y}`;
-        areaD += ` L ${x} ${y}`;
-      }
-    });
-
-    if (pointsCount > 0) {
-      const lastX = getX(pointsCount - 1);
-      areaD += ` L ${lastX} ${height - paddingBottom} Z`;
-    }
-
-    const targetY = getY(target);
-    const unitColor = getKpiEntriesColor(kpi);
-
-    return (
-      <div className="chart-container">
-        <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg">
-          <defs>
-            <linearGradient id="chartAreaGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={unitColor} stopOpacity="0.45" />
-              <stop offset="100%" stopColor={unitColor} stopOpacity="0.00" />
-            </linearGradient>
-            <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor={unitColor} floodOpacity="0.3" />
-            </filter>
-          </defs>
-
-          {/* Grid lines */}
-          {[0, 0.25, 0.5, 0.75, 1].map((r, i) => {
-            const gridVal = roundedMax * r;
-            const y = getY(gridVal);
-            return (
-              <g key={i}>
-                <line x1={paddingLeft} y1={y} x2={width - paddingRight} y2={y} className="chart-grid-line" />
-                <text x={paddingLeft - 10} y={y + 4} textAnchor="end" className="chart-axis-text">
-                  {gridVal.toLocaleString()}
-                </text>
-              </g>
-            );
-          })}
-
-          <line x1={paddingLeft} y1={height - paddingBottom} x2={width - paddingRight} y2={height - paddingBottom} className="chart-axis-line" />
-
-          {pointsCount > 1 && (
-            <path d={areaD} fill="url(#chartAreaGradient)" />
-          )}
-
-          {/* Target line */}
-          <line 
-            x1={paddingLeft} 
-            y1={targetY} 
-            x2={width - paddingRight} 
-            y2={targetY} 
-            className="chart-target-line" 
-          />
-          <text x={width - paddingRight} y={targetY - 6} textAnchor="end" className="chart-axis-text" fill="#f59e0b" fontWeight="700">
-            Meta: {target}
-          </text>
-
-          {pointsCount > 1 && (
-            <path d={pathD} fill="none" stroke={unitColor} className="chart-line" filter="url(#glow)" />
-          )}
-
-          {/* Data Points */}
-          {kpiEntries.map((entry, idx) => {
-            const x = getX(idx);
-            const y = getY(entry.value);
-            return (
-              <g key={entry.id}>
-                <circle 
-                  cx={x} 
-                  cy={y} 
-                  r={5} 
-                  className="chart-point" 
-                  stroke={unitColor} 
-                />
-                <text 
-                  x={x} 
-                  y={y - 10} 
-                  textAnchor="middle" 
-                  className="chart-axis-text" 
-                  fontWeight="700" 
-                  fill="#ffffff"
-                  style={{ textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}
-                >
-                  {entry.value}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Date labels */}
-          {kpiEntries.map((entry, idx) => {
-            const x = getX(idx);
-            const date = new Date(entry.period_end);
-            const label = `${date.getDate()}/${date.getMonth() + 1}`;
-            return (
-              <text 
-                key={entry.id} 
-                x={x} 
-                y={height - paddingBottom + 18} 
-                textAnchor="middle" 
-                className="chart-axis-text"
-              >
-                {label}
-              </text>
-            );
-          })}
-        </svg>
-      </div>
-    );
-  }
-
-  function getKpiEntriesColor(kpi) {
-    const kpiUnit = units.find(u => u.id === kpi.unit_id);
-    return getUnitColorHex(kpiUnit?.name);
   }
 
   // Filters
@@ -536,6 +528,10 @@ export default function App() {
   const selectedKpi = kpis.find(k => k.id === selectedKpiId);
   const selectedKpiUnit = selectedKpi ? units.find(u => u.id === selectedKpi.unit_id) : null;
   const selectedKpiEntries = selectedKpi ? getKpiEntries(selectedKpi.id) : [];
+  
+  const selectedKpiCommitments = selectedKpi && selectedKpi.name === 'Efectiva Desarrollo'
+    ? commitments.filter(c => c.target_month.slice(0, 7) === selectedMonth)
+    : [];
 
   const stats = getOverviewStats();
 
@@ -622,9 +618,9 @@ export default function App() {
               })}
             </nav>
 
-            {/* Layout switch: Resumen General vs. Unit Tabs */}
+            {/* Layout switch */}
             {activeTab === 'all' ? (
-              /* Executive Overview Panel (Fase 3 Feature) */
+              /* Executive Overview Panel */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 
                 {/* Stats row */}
@@ -670,6 +666,26 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Month Selection globally inside Resume General */}
+                <div className="glass-panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <Calendar size={18} style={{ color: 'var(--color-primary)' }} />
+                    <span style={{ fontWeight: '600', fontSize: '14px' }}>Mes de Evaluación:</span>
+                    <input 
+                      type="month"
+                      className="form-input"
+                      style={{ padding: '6px 12px', fontSize: '13px', background: 'rgba(0,0,0,0.2)' }}
+                      value={selectedMonth}
+                      onChange={(e) => {
+                        setSelectedMonth(e.target.value);
+                      }}
+                    />
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    *Los KPIs dinámicos se recalculan automáticamente para el mes de {selectedMonth}.
+                  </p>
+                </div>
+
                 {/* Units comparison & radial gauges */}
                 <div className="glass-panel" style={{ padding: '24px' }}>
                   <h3 style={{ fontSize: '18px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -700,16 +716,16 @@ export default function App() {
                               return (
                                 <div 
                                   key={kpi.id} 
-                                  style={{ display: 'flex', justifyItems: 'center', justifyContent: 'space-between', fontSize: '12px', cursor: 'pointer' }}
+                                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', cursor: 'pointer' }}
                                   onClick={() => {
                                     setSelectedKpiId(kpi.id);
-                                    setActiveTab(unit.id); // switch tab to unit for detail view
+                                    setActiveTab(unit.id);
                                   }}
                                 >
                                   <span style={{ color: 'var(--text-primary)', textDecoration: 'underline', textUnderlineOffset: '3px' }}>{kpi.name}</span>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <span style={{ fontWeight: '700', color: statusColor }}>
-                                      {val !== null ? `${val} (${kpiFulfillment}%)` : 'Sin datos'}
+                                      {val !== null ? `${val}${kpi.unit_of_measure === 'Porcentaje' ? '%' : ''} (${kpiFulfillment}%)` : 'Sin datos'}
                                     </span>
                                     {renderTrendIndicator(kpi)}
                                   </div>
@@ -756,11 +772,24 @@ export default function App() {
 
               </div>
             ) : (
-              /* Normal Tab Grid Layout (Filtered by Unit) */
+              /* Unit Dashboard Grid Layout */
               <div className="dashboard-grid">
                 
                 {/* Left Panel: KPI Cards */}
                 <div>
+                  {/* Month Selection inside unit views */}
+                  <div className="glass-panel" style={{ padding: '16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <Calendar size={16} style={{ color: 'var(--color-primary)' }} />
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>Mes de Medición:</span>
+                    <input 
+                      type="month"
+                      className="form-input"
+                      style={{ padding: '4px 10px', fontSize: '12px', background: 'rgba(0,0,0,0.2)' }}
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                    />
+                  </div>
+
                   <div className="kpi-grid">
                     {filteredKpis.map(kpi => {
                       const unit = units.find(u => u.id === kpi.unit_id);
@@ -795,7 +824,6 @@ export default function App() {
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '16px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '16px' }}>
-                            {/* Layout: Circular Ring for % or Value Block for others */}
                             {isPercentage && latestVal !== null ? (
                               <div className="kpi-indicator-ring">
                                 <CircularProgress percent={fulfillment} size={60} strokeWidth={5} color={statusColor} />
@@ -809,7 +837,7 @@ export default function App() {
                                   <span className="val-num" style={{ color: statusColor, display: 'inline-flex', alignItems: 'center' }}>
                                     {latestVal !== null ? latestVal : '-'}
                                     <span style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)', marginLeft: '3px' }}>
-                                      {kpi.unit_of_measure}
+                                      {kpi.unit_of_measure === 'Porcentaje' ? '%' : ` ${kpi.unit_of_measure}`}
                                     </span>
                                     {renderTrendIndicator(kpi)}
                                   </span>
@@ -818,7 +846,7 @@ export default function App() {
                                 <div className="target-container">
                                   <span className="val-label">Meta</span>
                                   <div className="target-val">
-                                    {kpi.target_value} {kpi.unit_of_measure}
+                                    {kpi.target_value} {kpi.unit_of_measure === 'Porcentaje' ? '%' : kpi.unit_of_measure}
                                   </div>
                                   <div style={{ fontSize: '11px', color: statusColor }}>
                                     {latestVal !== null ? `${fulfillment}% Meta` : 'Sin registros'}
@@ -826,7 +854,6 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Progress bar (only for non-percentage or empty states to keep visual balance) */}
                               {!isPercentage || latestVal === null ? (
                                 <div className="kpi-progress-bar-bg" style={{ marginTop: '8px' }}>
                                   <div 
@@ -875,53 +902,150 @@ export default function App() {
                         {renderSVGChart(selectedKpi)}
                       </div>
 
-                      {/* Historic List */}
-                      <div className="history-section">
-                        <div className="history-title">
-                          <span>Registros Históricos</span>
-                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
-                            {selectedKpiEntries.length} entradas
-                          </span>
-                        </div>
-
-                        {selectedKpiEntries.length === 0 ? (
-                          <p style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
-                            Registra el primer valor para visualizar el listado.
-                          </p>
-                        ) : (
-                          <div className="history-list">
-                            {[...selectedKpiEntries].reverse().map(entry => {
-                              const date = new Date(entry.period_end);
-                              const formattedDate = date.toLocaleDateString('es-ES', { 
-                                day: 'numeric', 
-                                month: 'short', 
-                                year: 'numeric' 
-                              });
-
-                              return (
-                                <div key={entry.id} className="history-item">
-                                  <div className="history-item-left">
-                                    <span className="history-date">{formattedDate}</span>
-                                    {entry.notes && <span className="history-note">{entry.notes}</span>}
-                                  </div>
-                                  <div className="history-item-right">
-                                    <span className="history-value" style={{ color: getKpiEntriesColor(selectedKpi) }}>
-                                      {entry.value} {selectedKpi.unit_of_measure}
-                                    </span>
-                                    <button 
-                                      className="history-delete-btn"
-                                      onClick={() => handleDeleteEntry(entry.id)}
-                                      title="Eliminar registro"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
+                      {/* Historic List - Custom layout for Efectiva Desarrollo */}
+                      {selectedKpi.name === 'Efectiva Desarrollo' ? (
+                        <div className="history-section">
+                          <div className="history-title">
+                            <span>Compromisos de Desarrollo ({selectedMonth})</span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
+                              {selectedKpiCommitments.length} asignados
+                            </span>
                           </div>
-                        )}
-                      </div>
+
+                          {selectedKpiCommitments.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
+                              No hay reportes registrados para este mes. Presiona "Registrar" para añadir uno.
+                            </p>
+                          ) : (
+                            <div style={{ overflowX: 'auto', marginTop: '10px' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                                <thead>
+                                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
+                                    <th style={{ padding: '8px' }}>Reporte</th>
+                                    <th style={{ padding: '8px' }}>Prioridad</th>
+                                    <th style={{ padding: '8px' }}>Desarrollador</th>
+                                    <th style={{ padding: '8px' }}>Periodo</th>
+                                    <th style={{ padding: '8px' }}>Entrega QA</th>
+                                    <th style={{ padding: '8px' }}>Adjunto</th>
+                                    <th style={{ padding: '8px' }}>Acciones</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedKpiCommitments.map(c => {
+                                    const isDelivered = c.delivery_date !== null;
+                                    return (
+                                      <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                        <td style={{ padding: '8px', fontWeight: 'bold' }}>{c.report_number}</td>
+                                        <td style={{ padding: '8px' }}>
+                                          <span style={{ padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)' }}>
+                                            P-{c.priority}
+                                          </span>
+                                        </td>
+                                        <td style={{ padding: '8px' }}>{c.developer_name}</td>
+                                        <td style={{ padding: '8px' }}>{c.period}</td>
+                                        <td style={{ padding: '8px' }}>
+                                          {isDelivered ? (
+                                            <span style={{ color: '#34d399', fontWeight: '600' }} title={`Entregado el ${c.delivery_date}`}>
+                                              ✓ {c.delivery_date}
+                                            </span>
+                                          ) : (
+                                            <span style={{ color: '#ef4444', fontWeight: '600' }}>Pendiente</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '8px' }}>
+                                          {c.attachment_url ? (
+                                            <a 
+                                              href={c.attachment_url} 
+                                              target="_blank" 
+                                              rel="noopener noreferrer"
+                                              style={{ color: 'var(--color-dev)', textDecoration: 'underline' }}
+                                            >
+                                              Ver Imagen
+                                            </a>
+                                          ) : (
+                                            <span style={{ color: 'var(--text-muted)' }}>-</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '8px', display: 'flex', gap: '8px' }}>
+                                          <button 
+                                            onClick={() => toggleCommitmentDelivery(c.id, c.delivery_date)}
+                                            style={{ 
+                                              background: isDelivered ? 'rgba(239, 68, 68, 0.1)' : 'rgba(52, 211, 153, 0.1)', 
+                                              color: isDelivered ? '#ef4444' : '#34d399', 
+                                              border: 'none', 
+                                              padding: '4px 8px', 
+                                              borderRadius: '4px', 
+                                              cursor: 'pointer',
+                                              fontSize: '11px',
+                                              fontWeight: '600'
+                                            }}
+                                          >
+                                            {isDelivered ? 'Revertir' : 'Entregar'}
+                                          </button>
+                                          <button 
+                                            onClick={() => handleDeleteCommitment(c.id)}
+                                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        /* Standard logs list for regular KPIs */
+                        <div className="history-section">
+                          <div className="history-title">
+                            <span>Registros Históricos</span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'normal' }}>
+                              {selectedKpiEntries.length} entradas
+                            </span>
+                          </div>
+
+                          {selectedKpiEntries.length === 0 ? (
+                            <p style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '20px' }}>
+                              Registra el primer valor para visualizar el listado.
+                            </p>
+                          ) : (
+                            <div className="history-list">
+                              {[...selectedKpiEntries].reverse().map(entry => {
+                                const date = new Date(entry.period_end);
+                                const formattedDate = date.toLocaleDateString('es-ES', { 
+                                  day: 'numeric', 
+                                  month: 'short', 
+                                  year: 'numeric' 
+                                });
+
+                                return (
+                                  <div key={entry.id} className="history-item">
+                                    <div className="history-item-left">
+                                      <span className="history-date">{formattedDate}</span>
+                                      {entry.notes && <span className="history-note">{entry.notes}</span>}
+                                    </div>
+                                    <div className="history-item-right">
+                                      <span className="history-value" style={{ color: getKpiEntriesColor(selectedKpi) }}>
+                                        {entry.value} {selectedKpi.unit_of_measure === 'Porcentaje' ? '%' : selectedKpi.unit_of_measure}
+                                      </span>
+                                      <button 
+                                        className="history-delete-btn"
+                                        onClick={() => handleDeleteEntry(entry.id)}
+                                        title="Eliminar registro"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="glass-panel empty-state">
@@ -939,83 +1063,231 @@ export default function App() {
       {/* Modal Form */}
       {showModal && modalKpi && (
         <div className="modal-overlay">
-          <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)' }}>
+          <div className="glass-panel modal-content" style={{ background: 'var(--bg-secondary)', maxWidth: modalKpi.name === 'Efectiva Desarrollo' ? '540px' : '480px' }}>
             <div className="modal-header">
-              <h2 style={{ fontSize: '18px' }}>Registrar KPI: {modalKpi.name}</h2>
+              <h2 style={{ fontSize: '18px' }}>Registrar: {modalKpi.name}</h2>
               <button className="modal-close-btn" onClick={() => setShowModal(false)}>
                 <X size={18} />
               </button>
             </div>
             
-            <form onSubmit={handleSubmit}>
-              <div className="modal-body">
-                <div className="form-group">
-                  <label className="form-label">Valor del KPI ({modalKpi.unit_of_measure}) *</label>
-                  <input 
-                    type="number"
-                    step="any"
-                    required
-                    className="form-input"
-                    placeholder={`Ingresa el valor (meta: ${modalKpi.target_value})`}
-                    value={formValue}
-                    onChange={(e) => setFormValue(e.target.value)}
-                  />
-                </div>
+            {modalKpi.name === 'Efectiva Desarrollo' ? (
+              /* Custom Form for Efectiva Desarrollo Commitment */
+              <form onSubmit={handleDevCommitmentSubmit}>
+                <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Número de Reporte *</label>
+                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', padding: '2px 10px' }}>
+                      <FileText size={16} style={{ color: 'var(--text-muted)', marginRight: '8px' }} />
+                      <input 
+                        type="text"
+                        required
+                        className="form-input"
+                        style={{ border: 'none', background: 'transparent', padding: '8px 0', flexGrow: 1 }}
+                        placeholder="Ej: REP-4859"
+                        value={devReportNum}
+                        onChange={(e) => setDevReportNum(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-                <div className="form-row-2">
                   <div className="form-group">
-                    <label className="form-label">Inicio del Periodo *</label>
+                    <label className="form-label">Prioridad (Numérica) *</label>
                     <input 
-                      type="date"
+                      type="number"
                       required
+                      min="1"
                       className="form-input"
-                      value={formPeriodStart}
-                      onChange={(e) => setFormPeriodStart(e.target.value)}
+                      placeholder="Ej: 1, 2, 3..."
+                      value={devPriority}
+                      onChange={(e) => setDevPriority(e.target.value)}
                     />
                   </div>
+
                   <div className="form-group">
-                    <label className="form-label">Fin del Periodo *</label>
+                    <label className="form-label">Recurso Asignado *</label>
+                    <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0, 0, 0, 0.3)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '8px', padding: '2px 10px' }}>
+                      <User size={16} style={{ color: 'var(--text-muted)', marginRight: '8px' }} />
+                      <input 
+                        type="text"
+                        required
+                        className="form-input"
+                        style={{ border: 'none', background: 'transparent', padding: '8px 0', flexGrow: 1 }}
+                        placeholder="Nombre de Desarrollador"
+                        value={devDeveloper}
+                        onChange={(e) => setDevDeveloper(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Periodo *</label>
+                    <select 
+                      className="form-input"
+                      value={devPeriod}
+                      onChange={(e) => setDevPeriod(e.target.value)}
+                    >
+                      <option value="Periodo 01">Periodo 01 (Día 1-10)</option>
+                      <option value="Periodo 02">Periodo 02 (Día 11-20)</option>
+                      <option value="Periodo 03">Periodo 03 (Día 21-Fin)</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Mes de la Demanda *</label>
                     <input 
-                      type="date"
+                      type="month"
                       required
                       className="form-input"
-                      value={formPeriodEnd}
-                      onChange={(e) => setFormPeriodEnd(e.target.value)}
+                      value={devMonth}
+                      onChange={(e) => setDevMonth(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Fecha de Entrega a QA (Opcional)</label>
+                    <input 
+                      type="date"
+                      className="form-input"
+                      value={devDeliveryDate}
+                      onChange={(e) => setDevDeliveryDate(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Adjuntar Imagen de Respaldo</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <input 
+                        type="file"
+                        accept="image/*"
+                        id="dev-file-upload"
+                        style={{ display: 'none' }}
+                        onChange={(e) => setDevFile(e.target.files[0])}
+                      />
+                      <label 
+                        htmlFor="dev-file-upload" 
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          gap: '10px', 
+                          border: '1px dashed rgba(255,255,255,0.15)', 
+                          padding: '16px', 
+                          borderRadius: '8px', 
+                          cursor: 'pointer',
+                          background: 'rgba(255,255,255,0.01)'
+                        }}
+                      >
+                        <Upload size={16} />
+                        {devFile ? devFile.name : 'Seleccionar captura/imagen (.png, .jpg)'}
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">Observaciones</label>
+                    <textarea 
+                      className="form-input"
+                      rows="2"
+                      placeholder="Comentarios sobre este reporte..."
+                      style={{ resize: 'none' }}
+                      value={devNotes}
+                      onChange={(e) => setDevNotes(e.target.value)}
                     />
                   </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Notas / Observaciones</label>
-                  <textarea 
-                    className="form-input"
-                    rows="3"
-                    placeholder="Detalles sobre este registro..."
-                    style={{ resize: 'none' }}
-                    value={formNotes}
-                    onChange={(e) => setFormNotes(e.target.value)}
-                  />
+                <div className="modal-footer">
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={() => setShowModal(false)}
+                    disabled={submitting}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary"
+                    disabled={submitting}
+                  >
+                    {submitting ? 'Guardando...' : 'Asignar Reporte'}
+                  </button>
                 </div>
-              </div>
+              </form>
+            ) : (
+              /* Standard Form for Regular KPIs */
+              <form onSubmit={handleGeneralSubmit}>
+                <div className="modal-body">
+                  <div className="form-group">
+                    <label className="form-label">Valor del KPI ({modalKpi.unit_of_measure}) *</label>
+                    <input 
+                      type="number"
+                      step="any"
+                      required
+                      className="form-input"
+                      placeholder={`Ingresa el valor (meta: ${modalKpi.target_value})`}
+                      value={formValue}
+                      onChange={(e) => setFormValue(e.target.value)}
+                    />
+                  </div>
 
-              <div className="modal-footer">
-                <button 
-                  type="button" 
-                  className="btn btn-secondary" 
-                  onClick={() => setShowModal(false)}
-                  disabled={submitting}
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit" 
-                  className="btn btn-primary"
-                  disabled={submitting}
-                >
-                  {submitting ? 'Registrando...' : 'Registrar Valor'}
-                </button>
-              </div>
-            </form>
+                  <div className="form-row-2">
+                    <div className="form-group">
+                      <label className="form-label">Inicio del Periodo *</label>
+                      <input 
+                        type="date"
+                        required
+                        className="form-input"
+                        value={formPeriodStart}
+                        onChange={(e) => setFormPeriodStart(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Fin del Periodo *</label>
+                      <input 
+                        type="date"
+                        required
+                        className="form-input"
+                        value={formPeriodEnd}
+                        onChange={(e) => setFormPeriodEnd(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Notas / Observaciones</label>
+                    <textarea 
+                      className="form-input"
+                      rows="3"
+                      placeholder="Detalles sobre este registro..."
+                      style={{ resize: 'none' }}
+                      value={formNotes}
+                      onChange={(e) => setFormNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="modal-footer">
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={() => setShowModal(false)}
+                    disabled={submitting}
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary"
+                    disabled={submitting}
+                  >
+                    {submitting ? 'Registrando...' : 'Registrar Valor'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
